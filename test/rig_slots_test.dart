@@ -84,6 +84,35 @@ void main() {
       expect(RigSlots.fromKv(kv)[0]?.name, 'a=b c');
     });
 
+    test('the invert key round-trips, emitted only when set', () {
+      const flipped = LoadCellProfile(
+        name: 'Upside-down',
+        capacityKg: 50,
+        sensitivityMvV: 2,
+        inverted: true,
+      );
+      const plain = LoadCellProfile(
+        name: 'Plain',
+        capacityKg: 50,
+        sensitivityMvV: 2,
+      );
+      final slots = RigSlots.empty().withSlot(0, flipped).withSlot(1, plain);
+      final kv = slots.toKv();
+      expect(kv['lc0.inv'], '1');
+      expect(kv.containsKey('lc1.inv'), isFalse);
+
+      final reparsed = RigSlots.fromKv(kv);
+      expect(reparsed[0], flipped);
+      expect(reparsed[1], plain);
+    });
+
+    test('an inv key alone does not populate a slot', () {
+      // The populated-slot rule is unchanged: only cap+sens do. The orphaned
+      // key stays in the KVS snapshot and the next save DELs it (it is a
+      // known slot key — see rigSlotKeys).
+      expect(RigSlots.fromKv(const {'lc3.inv': '1'})[3], isNull);
+    });
+
     test('unknown keys are ignored, never re-emitted', () {
       // Keys the model doesn't know (another tool's metadata) parse away;
       // the slots' kv map can only ever name slot keys.
