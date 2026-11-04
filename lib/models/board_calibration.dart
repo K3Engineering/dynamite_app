@@ -114,8 +114,11 @@ const List<String> boardConstantKeys = ['adc_fsr', 'exc', 'afe_gain'];
 
 /// The exact per-channel calibration keys the schema owns.
 final Set<String> channelCalibrationKeys = Set.unmodifiable({
-  for (int i = 0; i < kAdcChannelCount; ++i)
-    ...['ch$i.r', 'ch$i.raw', 'ch$i.noise'],
+  for (int i = 0; i < kAdcChannelCount; ++i) ...[
+    'ch$i.r',
+    'ch$i.raw',
+    'ch$i.noise',
+  ],
 });
 
 /// The exact calibration-group keys the schema owns: the marker
