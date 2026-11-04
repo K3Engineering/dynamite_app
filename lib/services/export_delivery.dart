@@ -74,8 +74,6 @@ Future<String?> downloadExport({
   final savedTo = await FilePicker.saveFile(
     dialogTitle: dialogTitle,
     fileName: fileName,
-    type: .custom,
-    allowedExtensions: [fileName.split('.').last],
     bytes: bytes,
   );
   if (kIsWeb) {
