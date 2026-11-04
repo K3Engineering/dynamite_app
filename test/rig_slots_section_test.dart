@@ -203,6 +203,29 @@ void main() {
     expect(find.textContaining('250 kg · 2.0004 mV/V'), findsOneWidget);
   });
 
+  testWidgets('the invert switch commits the flag; the row shows the marker', (
+    tester,
+  ) async {
+    final rig = await pump(tester);
+
+    await tester.tap(find.text('Break jig'));
+    await tester.pumpAndSettle();
+
+    // Seeded from the slot's cell: the fixture's cells are not inverted.
+    final tile = tester.widget<SwitchListTile>(
+      inDialog(find.byType(SwitchListTile)),
+    );
+    expect(tile.value, isFalse);
+
+    await tester.tap(inDialog(find.byType(SwitchListTile)));
+    await tester.pump();
+    await tester.tap(inDialog(find.widgetWithText(FilledButton, 'Save')));
+    await tester.pumpAndSettle();
+
+    expect(rig.channelCells[1]?.inverted, isTrue);
+    expect(find.textContaining('2.0004 mV/V · inverted'), findsOneWidget);
+  });
+
   testWidgets('clear slot empties it', (tester) async {
     final rig = await pump(tester);
 

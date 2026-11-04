@@ -46,21 +46,28 @@ class const ChannelConverter(
   /// unity. Null when the unit is unavailable on the channel: any converted
   /// unit with no board data, or a force unit with no load cell assigned.
   /// Raw never consults this.
+  ///
+  /// An inverted cell negates the scale of EVERY converted unit, not just
+  /// force: flipping only the cell scale would show e.g. -3.1 mV/V and
+  /// +310 kg for the same reading. One signed scale keeps the channel's
+  /// units mutually consistent; raw stays the physical diagnostic view.
   double? _scalePerMvV(DisplayUnit unit) {
     final board = calibration.board;
     if (board == null) return null;
     final excitationV = board.displayExcitationV;
+    final cell = calibration.loadCell;
+    final sign = cell != null && cell.inverted ? -1.0 : 1.0;
     final f = unit.kgfFactor;
     if (f != null) {
-      final cell = calibration.loadCell;
-      return cell == null ? null : f * cell.kgfPerMvV;
+      return cell == null ? null : sign * f * cell.kgfPerMvV;
     }
-    return unit == DisplayUnit.mV ? excitationV : 1.0;
+    return sign * (unit == DisplayUnit.mV ? excitationV : 1.0);
   }
 
   /// The absolute-raw -> display-unit map, net of tare (see the class doc).
-  /// Strictly increasing (board calibration points are validated ascending
-  /// in both raw and setpoint space, and unit scales are positive). A null
+  /// Strictly monotone: board calibration points are validated ascending in
+  /// both raw and setpoint space, and the unit scale is positive unless the
+  /// cell is inverted (which flips the map's direction too). A null
   /// tare means NO offset: zero is the map's own mV/V zero point, not zero
   /// counts. Null when unavailable: a force unit with no load cell, or any
   /// converted unit with no board data.

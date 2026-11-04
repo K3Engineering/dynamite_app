@@ -22,6 +22,7 @@ final Set<String> rigSlotKeys = Set.unmodifiable({
     'lc$i.name',
     'lc$i.cap',
     'lc$i.sens',
+    'lc$i.inv',
   ],
 });
 
@@ -101,6 +102,7 @@ class RigSlots {
               name: kv['lc$i.name'] ?? '',
               capacityKg: cap,
               sensitivityMvV: sens,
+              inverted: kv['lc$i.inv'] == '1',
             ),
           // Absent (or name-only) slot: no owned value to complain about.
           (null, null) => null,
@@ -113,8 +115,9 @@ class RigSlots {
   /// The populated slots' `lcN.*` keys — the full set the device should hold
   /// (a save SETs these and DELs known slot keys it doesn't). Newlines in
   /// names would break the line-based document; `=` in values is safe (parsing
-  /// splits at the first one). Integral values emit without a fraction so an
-  /// unchanged rig diffs clean.
+  /// splits at the first one). Integral values emit without a fraction and
+  /// the invert flag only when set (absent = not inverted), so an unchanged
+  /// rig diffs clean.
   Map<String, String> toKv() {
     return {
       for (int i = 0; i < kRigSlotCount; ++i)
@@ -123,6 +126,7 @@ class RigSlots {
             'lc$i.name': canonicalLoadCellName(cell.name),
           'lc$i.cap': formatDecimal(cell.capacityKg),
           'lc$i.sens': formatDecimal(cell.sensitivityMvV),
+          if (cell.inverted) 'lc$i.inv': '1',
         },
     };
   }
@@ -155,6 +159,14 @@ class const LoadCellProfile({
 
   /// Exact mV/V at full capacity (the calibration-certificate value).
   required final double sensitivityMvV,
+
+  /// Whether the cell reads negative under positive load (leads swapped
+  /// somewhere in its cable, or the cell flipped in its mount). Cell-anchored,
+  /// like the certificate values: a slot swap takes it along. The flag flips
+  /// the sign of every converted unit on the channel (see
+  /// [ChannelConverter]); capacity and sensitivity stay positive certificate
+  /// magnitudes, and raw counts never flip.
+  final bool inverted = false,
 }) {
   /// kgf per mV/V of measured signal.
   double get kgfPerMvV => capacityKg / sensitivityMvV;
@@ -162,19 +174,25 @@ class const LoadCellProfile({
   /// Human label: the name, or the values for generic profiles.
   String get title => name.isNotEmpty ? name : valuesLine;
 
-  /// The values line, e.g. `100 kg · 2.007 mV/V`.
+  /// The values line, e.g. `100 kg · 2.007 mV/V`. An inverted cell gets a
+  /// marker: this line is all the slot list, the history and the channel
+  /// titles show, and two profiles differing only in the flag must not look
+  /// alike.
   String get valuesLine =>
-      '${formatDecimal(capacityKg)} kg · ${formatDecimal(sensitivityMvV)} mV/V';
+      '${formatDecimal(capacityKg)} kg · ${formatDecimal(sensitivityMvV)} mV/V'
+      '${inverted ? ' · inverted' : ''}';
 
   @useResult
   LoadCellProfile copyWith({
     String? name,
     double? capacityKg,
     double? sensitivityMvV,
+    bool? inverted,
   }) => LoadCellProfile(
     name: name ?? this.name,
     capacityKg: capacityKg ?? this.capacityKg,
     sensitivityMvV: sensitivityMvV ?? this.sensitivityMvV,
+    inverted: inverted ?? this.inverted,
   );
 
   @override
@@ -182,15 +200,17 @@ class const LoadCellProfile({
       other is LoadCellProfile &&
       other.name == name &&
       other.capacityKg == capacityKg &&
-      other.sensitivityMvV == sensitivityMvV;
+      other.sensitivityMvV == sensitivityMvV &&
+      other.inverted == inverted;
 
   @override
-  int get hashCode => Object.hash(name, capacityKg, sensitivityMvV);
+  int get hashCode => Object.hash(name, capacityKg, sensitivityMvV, inverted);
 
   Map<String, dynamic> toJson() => {
     'name': name,
     'capacityKg': capacityKg,
     'sensitivityMvV': sensitivityMvV,
+    'inverted': inverted,
   };
 
   /// Strict parse: capacity and sensitivity must be positive finite, else
@@ -210,6 +230,8 @@ class const LoadCellProfile({
       name: name is String ? name : '',
       capacityKg: req(json['capacityKg'], 'capacityKg'),
       sensitivityMvV: req(json['sensitivityMvV'], 'sensitivityMvV'),
+      // Absent from documents written before the flag existed.
+      inverted: json['inverted'] == true,
     );
   }
 }

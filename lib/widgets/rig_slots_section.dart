@@ -433,6 +433,10 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
   late final TextEditingController capCtrl;
   late final TextEditingController sensCtrl;
 
+  /// The invert flag isn't a text field; it seeds from the slot snapshot
+  /// like the controllers do.
+  late bool inverted;
+
   RigState get rig => widget.rig;
   int get slot => widget.slot;
 
@@ -448,6 +452,7 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
     nameCtrl = TextEditingController(text: cell?.name ?? '');
     capCtrl = TextEditingController(text: _text(cell?.capacityKg));
     sensCtrl = TextEditingController(text: _text(cell?.sensitivityMvV));
+    inverted = cell?.inverted ?? false;
   }
 
   @override
@@ -464,11 +469,17 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
       nameCtrl.text = cell.name;
       capCtrl.text = formatDecimal(cell.capacityKg);
       sensCtrl.text = formatDecimal(cell.sensitivityMvV);
+      inverted = cell.inverted;
     });
   }
 
   void _save() {
-    final cell = _typedCell(nameCtrl.text, capCtrl.text, sensCtrl.text);
+    final cell = _typedCell(
+      nameCtrl.text,
+      capCtrl.text,
+      sensCtrl.text,
+      inverted,
+    );
     // The Save button is gated on the same check, so null here is
     // unreachable.
     if (cell == null) return;
@@ -533,6 +544,16 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
                 sensCtrl: sensCtrl,
                 onChanged: () => setState(() {}),
               ),
+              const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Inverted'),
+                subtitle: const Text(
+                  'This cell reads negative under load — flip its sign',
+                ),
+                value: inverted,
+                onChanged: (v) => setState(() => inverted = v),
+              ),
               if (_adding) ...[
                 const Divider(height: 24),
                 ..._historySection(theme),
@@ -556,7 +577,13 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
         ),
         FilledButton(
           onPressed:
-              _typedCell(nameCtrl.text, capCtrl.text, sensCtrl.text) != null
+              _typedCell(
+                    nameCtrl.text,
+                    capCtrl.text,
+                    sensCtrl.text,
+                    inverted,
+                  ) !=
+                  null
               ? _save
               : null,
           child: const Text('Save'),
@@ -651,7 +678,7 @@ class _CellFields extends StatelessWidget {
 /// and the KVS write path further down). The add and edit dialogs gate
 /// their Save button on this and build their cell from it, so the enable
 /// condition and the value committed can never disagree.
-LoadCellProfile? _typedCell(String name, String cap, String sens) {
+LoadCellProfile? _typedCell(String name, String cap, String sens, bool inv) {
   final c = _typedNumber(cap);
   final s = _typedNumber(sens);
   if (c == null ||
@@ -667,6 +694,7 @@ LoadCellProfile? _typedCell(String name, String cap, String sens) {
     name: canonicalLoadCellName(name),
     capacityKg: c,
     sensitivityMvV: s,
+    inverted: inv,
   );
 }
 

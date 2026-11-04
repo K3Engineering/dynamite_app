@@ -251,6 +251,9 @@ Map<String, Object?> _channelMetadata(_Column col) {
             'name': cell.name,
             'capacity_kg': cell.capacityKg,
             'sensitivity_mv_v': cell.sensitivityMvV,
+            // Only when true: absent reads as not inverted, keeping files
+            // from non-inverted rigs byte-identical to the old format.
+            if (cell.inverted) 'inverted': true,
           },
     'tare_raw': col.tare,
     'board_cal': board is CalibratedChannelBoard ? board.toJson() : null,

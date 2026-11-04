@@ -264,4 +264,68 @@ void main() {
       expect(assigned.rawAtGross(DisplayUnit.raw, 1234), 1234);
     });
   });
+
+  group('inverted cell', () {
+    // Same board, same tare, but the cell's sign flag set: the whole
+    // conversion must negate while the physical raw path stays put.
+    final inverted = ChannelConverter(
+      ChannelCalibration(
+        board: board,
+        // Only the cell differs from `assigned`: the flag alone must drive
+        // the whole sign flip.
+        loadCell: const LoadCellProfile(
+          capacityKg: 200,
+          sensitivityMvV: 2,
+          inverted: true,
+        ),
+      ),
+      alpha,
+    );
+
+    test('net flips sign in every converted unit; raw stays physical', () {
+      final rawValue = board.readings[0];
+      for (final u in [
+        DisplayUnit.mVv,
+        DisplayUnit.mV,
+        DisplayUnit.kgf,
+        DisplayUnit.lbf,
+      ]) {
+        expect(
+          inverted.net(u, rawValue),
+          closeTo(-assigned.net(u, rawValue)!, 1e-9),
+          reason: u.symbol,
+        );
+      }
+      expect(
+        inverted.net(DisplayUnit.raw, rawValue),
+        assigned.net(DisplayUnit.raw, rawValue),
+      );
+    });
+
+    test('the tare point still converts to exactly zero in every unit', () {
+      for (final u in DisplayUnit.values) {
+        if (inverted.netMap(u) == null) continue;
+        expect(inverted.net(u, alpha), 0.0, reason: u.symbol);
+      }
+    });
+
+    test('diff and the per-count quantum carry the sign', () {
+      expect(
+        inverted.diffMap(DisplayUnit.kgf)!(1000),
+        closeTo(-assigned.diffMap(DisplayUnit.kgf)!(1000), 1e-12),
+      );
+      expect(inverted.countQuantum(DisplayUnit.kgf)!.isNegative, isTrue);
+    });
+
+    test('the gross inverse round-trips through the flipped scale', () {
+      final rawValue = board.readings[1];
+      expect(
+        inverted.rawAtGross(
+          DisplayUnit.kgf,
+          inverted.gross(DisplayUnit.kgf, rawValue)!,
+        ),
+        closeTo(rawValue, 1e-6),
+      );
+    });
+  });
 }
