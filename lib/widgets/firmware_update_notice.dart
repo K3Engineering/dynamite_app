@@ -2,9 +2,10 @@ import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../services/firmware_update_service.dart';
+import '../status_colors.dart';
 
 /// The "firmware update available" line, shown on the two dark
-/// `primaryContainer` device surfaces: the Live status bar and the connected
+/// [StatusColors.stateContainer] surfaces: the Live status bar and the connected
 /// Devices row. Represents [FirmwareUpdateService.checkState] directly — it
 /// renders nothing unless the connected device's release check found a
 /// difference, so it appears and disappears with the state (no dismissal, no
@@ -26,9 +27,7 @@ class FirmwareUpdateNotice extends StatelessWidget {
           : null;
     });
     if (tag == null) return const SizedBox.shrink();
-    // inversePrimary is this app's accent-on-dark-container role (also the
-    // snackbar action color); see main.dart.
-    final accent = Theme.of(context).colorScheme.inversePrimary;
+    final accent = Theme.of(context).extension<StatusColors>()!.stateAccent;
     return Semantics(
       button: true,
       label: 'Firmware update available',

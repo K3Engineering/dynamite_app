@@ -17,6 +17,7 @@ import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/demo_device.dart';
 import 'package:dynamite_app/services/firmware_catalog.dart';
 import 'package:dynamite_app/services/firmware_update_service.dart';
+import 'package:dynamite_app/status_colors.dart';
 
 import 'helpers/mockble.dart';
 
@@ -93,6 +94,7 @@ void main() {
           ),
         ],
         child: MaterialApp(
+          theme: ThemeData(extensions: const [StatusColors.light]),
           home: Scaffold(body: SettingsTab(onGoToDevices: () {})),
         ),
       ),

@@ -8,6 +8,7 @@ import 'package:universal_ble/universal_ble.dart';
 import 'package:dynamite_app/screens/live_tab.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
+import 'package:dynamite_app/status_colors.dart';
 
 import 'helpers/mockble.dart';
 
@@ -43,8 +44,9 @@ void main() {
     await tester.pumpWidget(
       ChangeNotifierProvider.value(
         value: link,
-        child: const MaterialApp(
-          home: Scaffold(
+        child: MaterialApp(
+          theme: ThemeData(extensions: const [StatusColors.light]),
+          home: const Scaffold(
             body: LiveStatusBar(
               linkState: .streaming,
               connectedDeviceName: 'K3',

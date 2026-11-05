@@ -210,10 +210,9 @@ class DynoApp extends StatelessWidget {
     // ColorScheme.light()/.dark() fall undeclared M3 roles back to base roles,
     // theming some widgets wrong; declare every role the app reads.
     const lightScheme = ColorScheme.light(
-      // top "connected" bar, rec, tare buttons, button fonts
       primary: Color(0xFF455A64),
       onPrimary: Colors.white,
-      // Connected/highlighted surfaces (Live banner, active device row).
+      // Explicit device-state surfaces use [StatusColors.stateContainer].
       primaryContainer: Color(0xFF455A64),
       onPrimaryContainer: Colors.white,
       // active tab on the bottom
@@ -232,6 +231,8 @@ class DynoApp extends StatelessWidget {
       onSurface: Colors.black,
       error: Color(0xFFB00020),
       onError: Colors.white,
+      errorContainer: Color(0xFFB00020),
+      onErrorContainer: Colors.white,
       // Dimmed/inactive content (BT-off icon, expired-scan rows).
       outline: Color(0xFF78909C), // blueGrey 400
       // Quiet hairlines; Dividers default to this role in M3.
@@ -244,8 +245,7 @@ class DynoApp extends StatelessWidget {
       // SnackBar themes itself off inverseSurface/onInverseSurface; identical
       // in both schemes, so one toast style regardless of mode. Error toasts
       // override background/content via showErrorSnackBar. inversePrimary is
-      // the accent for content on a dark container: snackbar action labels and
-      // the firmware-update notice lines (FirmwareUpdateNotice).
+      // the snackbar action-label accent.
       inverseSurface: Color(0xFF323232),
       onInverseSurface: Colors.white,
       inversePrimary: Color(0xFF89B2C5),
@@ -268,6 +268,8 @@ class DynoApp extends StatelessWidget {
       onSurface: Colors.white,
       error: Color(0xFFCF6679),
       onError: Colors.black,
+      errorContainer: Color(0xFFCF6679),
+      onErrorContainer: Colors.black,
       // Dimmed/inactive content (BT-off icon, expired-scan rows).
       outline: Color(0xFF90A4AE), // blueGrey 300
       outlineVariant: Color(0xFF546E7A), // blueGrey 600
@@ -280,12 +282,6 @@ class DynoApp extends StatelessWidget {
       onInverseSurface: Colors.white,
       inversePrimary: Color(0xFF89B2C5),
     );
-
-    // A selected ListTile supplies the matching content color; the surface
-    // owner (the Card) supplies the background, so selectedTileColor is not set
-    // here.
-    ListTileThemeData selectedTileTheme(ColorScheme scheme) =>
-        ListTileThemeData(selectedColor: scheme.onPrimaryContainer);
 
     // M3's inactive nav color is too quiet; only that moves, to onSurface.
     // Sizes replicate the M3 defaults (this property replaces the whole
@@ -326,7 +322,6 @@ class DynoApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFFF8F9FA),
         extensions: const [StatusColors.light],
         colorScheme: lightScheme,
-        listTileTheme: selectedTileTheme(lightScheme),
         navigationBarTheme: navBarTheme(lightScheme),
       ),
       darkTheme: ThemeData(
@@ -334,7 +329,6 @@ class DynoApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFF121212),
         extensions: const [StatusColors.dark],
         colorScheme: darkScheme,
-        listTileTheme: selectedTileTheme(darkScheme),
         navigationBarTheme: navBarTheme(darkScheme),
       ),
       home: const AppShell(),

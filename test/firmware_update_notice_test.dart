@@ -12,6 +12,7 @@ import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/firmware_catalog.dart';
 import 'package:dynamite_app/services/firmware_update_service.dart';
+import 'package:dynamite_app/status_colors.dart';
 import 'package:dynamite_app/widgets/firmware_update_notice.dart';
 
 import 'helpers/mockble.dart';
@@ -72,6 +73,7 @@ void main() {
       ChangeNotifierProvider<FirmwareUpdateService>.value(
         value: service,
         child: MaterialApp(
+          theme: ThemeData(extensions: const [StatusColors.light]),
           home: Scaffold(
             body: FirmwareUpdateNotice(onReview: () => reviewed = true),
           ),
@@ -93,9 +95,15 @@ void main() {
     }
     expect(link.isStreaming, isTrue);
     await tester.pump(const Duration(seconds: 1));
-    expect(find.text('Firmware update available · v0.2.0'), findsOneWidget);
+    final noticeText = find.text('Firmware update available · v0.2.0');
+    expect(noticeText, findsOneWidget);
+    final noticeContext = tester.element(noticeText);
+    expect(
+      tester.widget<Icon>(find.byIcon(Icons.system_update_alt)).color,
+      Theme.of(noticeContext).extension<StatusColors>()!.stateAccent,
+    );
 
-    await tester.tap(find.text('Firmware update available · v0.2.0'));
+    await tester.tap(noticeText);
     expect(reviewed, isTrue);
 
     // Point the catalog at the bits the device already runs and re-check
