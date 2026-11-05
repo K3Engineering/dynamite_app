@@ -6,6 +6,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'app_theme.dart';
 import 'models/app_meta.dart';
 import 'services/app_settings.dart';
 import 'services/adc_packet_decoder.dart';
@@ -29,7 +30,6 @@ import 'services/session_metadata.dart';
 import 'services/stream_reset_coordinator.dart';
 import 'services/wakelock_policy.dart';
 import 'screens/app_shell.dart';
-import 'status_colors.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -207,136 +207,11 @@ class DynoApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // ColorScheme.light()/.dark() fall undeclared M3 roles back to base roles,
-    // theming some widgets wrong; declare every role the app reads.
-    const lightScheme = ColorScheme.light(
-      // top "connected" bar, rec, tare buttons, button fonts
-      primary: Color(0xFF455A64),
-      onPrimary: Colors.white,
-      // Connected/highlighted surfaces (Live banner, active device row).
-      primaryContainer: Color(0xFF455A64),
-      onPrimaryContainer: Colors.white,
-      // active tab on the bottom
-      secondary: Color(0xFF455A64),
-      // icon color of selected tab
-      onSecondary: Colors.white,
-      // Kept primary-family for M3 widgets themed off this role. A distinct
-      // secondaryContainer would make determinate progress tracks match their
-      // fill.
-      secondaryContainer: Color(0xFF455A64),
-      onSecondaryContainer: Colors.white,
-      tertiary: Color.fromARGB(255, 211, 47, 47),
-      onTertiary: Colors.white,
-      surface: Colors.white,
-      // text
-      onSurface: Colors.black,
-      error: Color(0xFFB00020),
-      onError: Colors.white,
-      // Dimmed/inactive content (BT-off icon, expired-scan rows).
-      outline: Color(0xFF78909C), // blueGrey 400
-      // Quiet hairlines; Dividers default to this role in M3.
-      outlineVariant: Color(0xFFCFD8DC), // blueGrey 100
-      // De-emphasized secondary text (settings notes, plot axis labels).
-      onSurfaceVariant: Color(0xFF546E7A), // blueGrey 600
-      // De-emphasized surface (the stale device row's card tint):
-      // onSurface at 6% blended over surface.
-      surfaceContainerHighest: Color(0xFFF0F0F0),
-      // SnackBar themes itself off inverseSurface/onInverseSurface; identical
-      // in both schemes, so one toast style regardless of mode. Error toasts
-      // override background/content via showErrorSnackBar. inversePrimary is
-      // the accent for content on a dark container: snackbar action labels and
-      // the firmware-update notice lines (FirmwareUpdateNotice).
-      inverseSurface: Color(0xFF323232),
-      onInverseSurface: Colors.white,
-      inversePrimary: Color(0xFF89B2C5),
-    );
-    const darkScheme = ColorScheme.dark(
-      primary: Color.fromARGB(255, 103, 155, 179),
-      onPrimary: Colors.white,
-      // White on this container is mediocre contrast; kept for the existing
-      // dark look.
-      primaryContainer: Color.fromARGB(255, 103, 155, 179),
-      onPrimaryContainer: Colors.white,
-      secondary: Color.fromARGB(255, 137, 178, 197),
-      onSecondary: Colors.black,
-      // Same declaration as light (= secondary); see the comment there.
-      secondaryContainer: Color.fromARGB(255, 137, 178, 197),
-      onSecondaryContainer: Colors.black,
-      tertiary: Color(0xFFEF5350),
-      onTertiary: Colors.white,
-      surface: Color(0xFF1E1E1E),
-      onSurface: Colors.white,
-      error: Color(0xFFCF6679),
-      onError: Colors.black,
-      // Dimmed/inactive content (BT-off icon, expired-scan rows).
-      outline: Color(0xFF90A4AE), // blueGrey 300
-      outlineVariant: Color(0xFF546E7A), // blueGrey 600
-      onSurfaceVariant: Color(0xFF78909C), // blueGrey 400
-      // De-emphasized surface (the stale device row's card tint):
-      // onSurface at 6% blended over surface.
-      surfaceContainerHighest: Color(0xFF2B2B2B),
-      // Same toast/notice surfaces as light; see the light scheme.
-      inverseSurface: Color(0xFF323232),
-      onInverseSurface: Colors.white,
-      inversePrimary: Color(0xFF89B2C5),
-    );
-
-    // A selected ListTile supplies the matching content color; the surface
-    // owner (the Card) supplies the background, so selectedTileColor is not set
-    // here.
-    ListTileThemeData selectedTileTheme(ColorScheme scheme) =>
-        ListTileThemeData(selectedColor: scheme.onPrimaryContainer);
-
-    // M3's inactive nav color is too quiet; only that moves, to onSurface.
-    // Sizes replicate the M3 defaults (this property replaces the whole
-    // resolve).
-    NavigationBarThemeData navBarTheme(ColorScheme colors) {
-      const inactiveAlpha = 0.8;
-      return NavigationBarThemeData(
-        iconTheme: WidgetStateProperty.resolveWith(
-          (states) => IconThemeData(
-            size: 24,
-            color: states.contains(WidgetState.disabled)
-                ? colors.onSurfaceVariant.withValues(alpha: 0.38)
-                : states.contains(WidgetState.selected)
-                ? colors.onSecondaryContainer
-                : colors.onSurface.withValues(alpha: inactiveAlpha),
-          ),
-        ),
-        labelTextStyle: WidgetStateProperty.resolveWith(
-          (states) => TextStyle(
-            fontSize: 12,
-            fontWeight: .w500,
-            letterSpacing: 0.5,
-            color: states.contains(WidgetState.disabled)
-                ? colors.onSurfaceVariant.withValues(alpha: 0.38)
-                : states.contains(WidgetState.selected)
-                ? colors.onSurface
-                : colors.onSurface.withValues(alpha: inactiveAlpha),
-          ),
-        ),
-      );
-    }
-
     return MaterialApp(
       title: 'Dynamite Sampler App',
       themeMode: .system,
-      theme: ThemeData(
-        useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF8F9FA),
-        extensions: const [StatusColors.light],
-        colorScheme: lightScheme,
-        listTileTheme: selectedTileTheme(lightScheme),
-        navigationBarTheme: navBarTheme(lightScheme),
-      ),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFF121212),
-        extensions: const [StatusColors.dark],
-        colorScheme: darkScheme,
-        listTileTheme: selectedTileTheme(darkScheme),
-        navigationBarTheme: navBarTheme(darkScheme),
-      ),
+      theme: AppTheme.light,
+      darkTheme: AppTheme.dark,
       home: const AppShell(),
     );
   }

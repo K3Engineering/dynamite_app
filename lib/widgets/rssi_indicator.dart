@@ -22,7 +22,7 @@ class RssiIndicator extends StatelessWidget {
   final int? rssi;
 
   /// Icon color. Pass explicitly on tinted surfaces (e.g. the connected
-  /// device row's primaryContainer), where the default IconTheme color is
+  /// device row's stateContainer), where the default IconTheme color is
   /// wrong. Defaults to the ambient IconTheme color.
   final Color? color;
 

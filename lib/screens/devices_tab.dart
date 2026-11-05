@@ -542,12 +542,9 @@ class _ActiveDeviceRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final visual = btActiveLinkVisual(
-      linkState: linkState,
-      status: Theme.of(context).extension<StatusColors>()!,
-    );
-    final scheme = Theme.of(context).colorScheme;
-    final onContainer = scheme.onPrimaryContainer;
+    final status = Theme.of(context).extension<StatusColors>()!;
+    final visual = btActiveLinkVisual(linkState: linkState, status: status);
+    final onContainer = status.onStateContainer;
     final isConnecting = linkState == BtLinkState.connecting;
     final isDisconnecting = linkState == BtLinkState.disconnecting;
 
@@ -577,78 +574,81 @@ class _ActiveDeviceRow extends StatelessWidget {
       ],
     );
 
-    return Card(
-      color: scheme.primaryContainer,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          // Wide: buttons ride in the tile's trailing. Narrow: the trailing
-          // would leave no text lane, so they move to their own row.
-          final wide = constraints.maxWidth >= _activeRowSingleRowWidth;
-          final tile = ListTile(
-            selected: true,
-            minLeadingWidth: 28,
-            horizontalTitleGap: 8,
-            leading: Stack(
-              alignment: .center,
-              children: [
-                Icon(icon ?? visual.icon, color: visual.color),
-                if (visual.showSpinner)
-                  SizedBox(
-                    width: 28,
-                    height: 28,
-                    // Spinners don't participate in tile theming; color it
-                    // explicitly or it defaults to primary on the dark surface.
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(onContainer),
+    return ListTileTheme(
+      data: ListTileThemeData(selectedColor: onContainer),
+      child: Card(
+        color: status.stateContainer,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // Wide: buttons ride in the tile's trailing. Narrow: the trailing
+            // would leave no text lane, so they move to their own row.
+            final wide = constraints.maxWidth >= _activeRowSingleRowWidth;
+            final tile = ListTile(
+              selected: true,
+              minLeadingWidth: 28,
+              horizontalTitleGap: 8,
+              leading: Stack(
+                alignment: .center,
+                children: [
+                  Icon(icon ?? visual.icon, color: visual.color),
+                  if (visual.showSpinner)
+                    SizedBox(
+                      width: 28,
+                      height: 28,
+                      // Spinners don't participate in tile theming; color it
+                      // explicitly or it defaults to primary on the dark surface.
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation(onContainer),
+                      ),
+                    ),
+                ],
+              ),
+              title: Text(name),
+              // One Text.rich so the label wraps at word boundaries; a Row would
+              // squeeze it to near-zero width on a phone.
+              subtitle: Column(
+                crossAxisAlignment: .start,
+                mainAxisSize: .min,
+                children: [
+                  Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(text: visual.label),
+                        if (model != null) TextSpan(text: ' • $model'),
+                        if (connectedRssi != null) ...[
+                          const TextSpan(text: ' • '),
+                          WidgetSpan(
+                            alignment: .middle,
+                            child: RssiIndicator(
+                              rssi: connectedRssi,
+                              color: onContainer,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
-              ],
-            ),
-            title: Text(name),
-            // One Text.rich so the label wraps at word boundaries; a Row would
-            // squeeze it to near-zero width on a phone.
-            subtitle: Column(
-              crossAxisAlignment: .start,
-              mainAxisSize: .min,
-              children: [
-                Text.rich(
-                  TextSpan(
-                    children: [
-                      TextSpan(text: visual.label),
-                      if (model != null) TextSpan(text: ' • $model'),
-                      if (connectedRssi != null) ...[
-                        const TextSpan(text: ' • '),
-                        WidgetSpan(
-                          alignment: .middle,
-                          child: RssiIndicator(
-                            rssi: connectedRssi,
-                            color: onContainer,
-                          ),
-                        ),
-                      ],
-                    ],
+                  FeedHealthIndicator(
+                    health: context.read<FeedHealthTracker>().health,
                   ),
-                ),
-                FeedHealthIndicator(
-                  health: context.read<FeedHealthTracker>().health,
-                ),
-                FirmwareUpdateNotice(onReview: onReviewUpdate),
-              ],
-            ),
-            trailing: wide ? actions : null,
-          );
-          if (wide) return tile;
-          return Column(
-            children: [
-              tile,
-              Padding(
-                padding: const EdgeInsets.only(right: 24, bottom: 8),
-                child: Align(alignment: .centerEnd, child: actions),
+                  FirmwareUpdateNotice(onReview: onReviewUpdate),
+                ],
               ),
-            ],
-          );
-        },
+              trailing: wide ? actions : null,
+            );
+            if (wide) return tile;
+            return Column(
+              children: [
+                tile,
+                Padding(
+                  padding: const EdgeInsets.only(right: 24, bottom: 8),
+                  child: Align(alignment: .centerEnd, child: actions),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }

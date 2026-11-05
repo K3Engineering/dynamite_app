@@ -15,6 +15,7 @@ import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
 import '../services/firmware_update_service.dart';
 import '../services/rig_state.dart';
+import '../status_colors.dart';
 import '../widgets/bt_icon.dart';
 import '../widgets/calibration_text.dart';
 import '../widgets/info_cards.dart';
@@ -332,7 +333,9 @@ class _FirmwareCard extends StatelessWidget {
     final service = context.watch<FirmwareUpdateService>();
     final state = service.checkState;
     final updateAvailable = state is CheckOk && state.result.differsFromDevice;
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final status = theme.extension<StatusColors>()!;
     final (subtitle, failed) = switch (state) {
       CheckNeverRan() => ('Tap to check for updates', false),
       CheckRunning() => ('Checking for updates…', false),
@@ -351,12 +354,12 @@ class _FirmwareCard extends StatelessWidget {
     // it" surface treatment (the connected row and the Live banner). Colors are
     // explicit because the tinted card drops the ListTile's onSurface defaults
     // to unreadable.
-    final onContainer = updateAvailable ? scheme.onPrimaryContainer : null;
+    final onContainer = updateAvailable ? status.onStateContainer : null;
     return Card(
-      color: updateAvailable ? scheme.primaryContainer : null,
+      color: updateAvailable ? status.stateContainer : null,
       child: ListTile(
         leading: updateAvailable
-            ? Icon(Icons.system_update_alt, color: scheme.inversePrimary)
+            ? Icon(Icons.system_update_alt, color: status.stateAccent)
             : null,
         title: Text('Firmware', style: TextStyle(color: onContainer)),
         subtitle: Text(

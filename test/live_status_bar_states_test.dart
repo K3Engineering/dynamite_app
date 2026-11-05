@@ -7,6 +7,7 @@ import 'package:dynamite_app/models/bt_scan.dart';
 import 'package:dynamite_app/screens/live_tab.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
+import 'package:dynamite_app/status_colors.dart';
 
 import 'helpers/mockble.dart';
 
@@ -24,7 +25,10 @@ void main() {
   });
 
   Widget host(Widget child) {
-    return MaterialApp(home: Scaffold(body: child));
+    return MaterialApp(
+      theme: ThemeData(extensions: const [StatusColors.light]),
+      home: Scaffold(body: child),
+    );
   }
 
   LiveStatusBar bar(BtLinkState state) => LiveStatusBar(
@@ -91,8 +95,8 @@ void main() {
           child: host(bar(BtLinkState.streaming)),
         ),
       );
-      final scheme = schemeOf(tester, LiveStatusBar);
-      expect(barColor(tester), scheme.primaryContainer);
+      final theme = Theme.of(tester.element(find.byType(LiveStatusBar)));
+      expect(barColor(tester), theme.extension<StatusColors>()!.stateContainer);
       expect(find.text('Connected: K3'), findsOneWidget);
       await tester.pump(const Duration(seconds: 6));
     });

@@ -378,23 +378,22 @@ class LiveStatusBar extends StatelessWidget {
         ),
       );
     }
+    final status = Theme.of(context).extension<StatusColors>()!;
     final report = health?.worthReporting ?? false;
     final noData = health?.noDataFlowing ?? false;
-    final warning = report
-        ? Theme.of(context).extension<StatusColors>()!.onConnectedWarning
-        : null;
+    final warning = report ? status.onConnectedWarning : null;
     final bar = GestureDetector(
       onTap: report ? () => _showHealthDetails(context, health!) : null,
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        color: scheme.primaryContainer,
+        color: status.stateContainer,
         child: Row(
           children: [
             Icon(
               Icons.bluetooth_connected,
               size: 18,
-              color: scheme.onPrimaryContainer,
+              color: status.onStateContainer,
             ),
             const SizedBox(width: 8),
             Expanded(
@@ -405,7 +404,7 @@ class LiveStatusBar extends StatelessWidget {
                   Text(
                     'Connected: $connectedDeviceName',
                     style: TextStyle(
-                      color: scheme.onPrimaryContainer,
+                      color: status.onStateContainer,
                       fontWeight: .w500,
                     ),
                   ),
@@ -430,7 +429,7 @@ class LiveStatusBar extends StatelessWidget {
             Text(
               noData ? 'no data' : '$sampleRateHz Hz',
               style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: noData ? scheme.outline : scheme.onPrimaryContainer,
+                color: noData ? scheme.outline : status.onStateContainer,
               ),
             ),
           ],
@@ -460,12 +459,12 @@ class _ConnectedRssiIndicator extends StatelessWidget {
   Widget build(BuildContext context) {
     final rssi = context.select<BleLinkManager, int?>((l) => l.connectedRssi);
     if (rssi == null) return const SizedBox.shrink();
-    final color = Theme.of(context).colorScheme.onPrimaryContainer;
+    final color = Theme.of(context).extension<StatusColors>()!.onStateContainer;
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: DefaultTextStyle(
         // Match the sample-rate label; the ambient default style's color is
-        // wrong on this tinted primaryContainer surface.
+        // wrong on this tinted stateContainer surface.
         style:
             Theme.of(context).textTheme.labelSmall?.copyWith(color: color) ??
             TextStyle(color: color),
