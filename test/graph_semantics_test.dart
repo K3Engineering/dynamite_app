@@ -117,6 +117,19 @@ void main() {
       findsOneWidget,
     );
 
+    await pumpGraph(
+      data: calibratedHub(),
+      activeChannels: const [0, 1],
+      analysis: const AnalysisPaneSelection(kind: AnalysisPaneKind.compare),
+    );
+    expect(
+      find.bySemanticsLabel(
+        'Live force graph. Channels: CH 0, CH 1. Unit: mV/V. '
+        'Load-cell comparison graph below.',
+      ),
+      findsOneWidget,
+    );
+
     // The overview minimap is actionable (tap/drag pan), so it must be labeled
     // rather than an anonymous node.
     final minimap = find.bySemanticsLabel('Graph history overview');

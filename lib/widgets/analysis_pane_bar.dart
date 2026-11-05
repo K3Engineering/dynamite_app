@@ -1,7 +1,10 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../models/analysis_pane.dart';
+import '../models/cell_comparison.dart';
 import '../models/derived_channel.dart';
+import '../models/device_profile.dart';
+import '../models/load_cell.dart';
 import '../utils/fft.dart';
 
 // ---------------------------------------------------------------------------
@@ -12,8 +15,8 @@ import '../utils/fft.dart';
 // parameters. Used by both the live tab and the session review screen, keep
 // it stateless: the screen owns the [AnalysisPaneSelection].
 //
-// The panes take the workspace's channel selection (the stats-table
-// toggles), so no pane picks channels here.
+// Time-series panes take the workspace's stats-table channel selection;
+// Compare owns its explicit reference/compared pair instead.
 // ---------------------------------------------------------------------------
 
 class AnalysisPaneBar extends StatelessWidget {
@@ -37,6 +40,7 @@ class AnalysisPaneBar extends StatelessWidget {
     final kinds = <(AnalysisPaneKind, String)>[
       (AnalysisPaneKind.derivative, 'dF/dt'),
       (AnalysisPaneKind.fft, 'FFT'),
+      (AnalysisPaneKind.compare, 'Compare'),
       if (mathProfile.plateXId != null) (AnalysisPaneKind.plate, 'Plate'),
     ];
     return Padding(
@@ -85,8 +89,75 @@ class AnalysisPaneBar extends StatelessWidget {
           ..._xChips,
         ],
       ),
+      AnalysisPaneKind.compare => Wrap(
+        spacing: 8,
+        runSpacing: 4,
+        alignment: WrapAlignment.center,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          _comparisonChannel(reference: true),
+          _comparisonChannel(reference: false),
+          const _ParamsDivider(),
+          ..._comparisonModeChips,
+          const _ParamsDivider(),
+          ..._comparisonXChips,
+        ],
+      ),
     };
   }
+
+  DropdownButton<int> _comparisonChannel({required bool reference}) {
+    final selected = reference ? selection.comparisonA : selection.comparisonB;
+    return DropdownButton<int>(
+      value: selected,
+      underline: const SizedBox.shrink(),
+      items: [
+        for (int ch = 0; ch < kAdcChannelCount; ch++)
+          DropdownMenuItem(
+            value: ch,
+            child: Text('${reference ? 'A' : 'B'}: ${rigSlotTitle(ch)}'),
+          ),
+      ],
+      onChanged: (ch) {
+        if (ch == null) return;
+        onChanged(
+          reference
+              ? selection.withComparisonA(ch)
+              : selection.withComparisonB(ch),
+        );
+      },
+    );
+  }
+
+  List<Widget> get _comparisonModeChips => [
+    for (final (mode, label) in [
+      (ComparisonPlotMode.total, 'Total'),
+      (ComparisonPlotMode.residual, 'Residual'),
+    ])
+      ChoiceChip(
+        label: Text(label),
+        selected: selection.comparisonMode == mode,
+        onSelected: (_) => onChanged(selection.copyWith(comparisonMode: mode)),
+        visualDensity: VisualDensity.compact,
+      ),
+  ];
+
+  List<Widget> get _comparisonXChips => [
+    ChoiceChip(
+      label: const Text('Auto X'),
+      selected: !selection.comparisonFullScaleX,
+      onSelected: (_) =>
+          onChanged(selection.copyWith(comparisonFullScaleX: false)),
+      visualDensity: VisualDensity.compact,
+    ),
+    ChoiceChip(
+      label: const Text('±FS X'),
+      selected: selection.comparisonFullScaleX,
+      onSelected: (_) =>
+          onChanged(selection.copyWith(comparisonFullScaleX: true)),
+      visualDensity: VisualDensity.compact,
+    ),
+  ];
 
   List<Widget> get _nChips => [
     ChoiceChip(
