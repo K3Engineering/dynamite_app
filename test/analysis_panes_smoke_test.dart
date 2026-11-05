@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'package:dynamite_app/models/analysis_pane.dart';
 import 'package:dynamite_app/models/board_calibration.dart';
+import 'package:dynamite_app/models/cell_comparison.dart';
 import 'package:dynamite_app/models/derived_channel.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/device_profile.dart';
@@ -78,6 +79,15 @@ void main() {
     const variants = <AnalysisPaneSelection>[
       AnalysisPaneSelection(kind: AnalysisPaneKind.derivative),
       AnalysisPaneSelection(kind: AnalysisPaneKind.plate),
+      AnalysisPaneSelection(kind: AnalysisPaneKind.compare),
+      AnalysisPaneSelection(
+        kind: AnalysisPaneKind.compare,
+        comparisonMode: ComparisonPlotMode.residual,
+      ),
+      AnalysisPaneSelection(
+        kind: AnalysisPaneKind.compare,
+        comparisonFullScaleX: true,
+      ),
       AnalysisPaneSelection(kind: AnalysisPaneKind.fft),
       AnalysisPaneSelection(
         kind: AnalysisPaneKind.fft,
@@ -172,6 +182,29 @@ void main() {
     await tester.tap(find.text('FFT'));
     await tester.pump();
     expect(selection.kind, isNull);
+
+    await tester.tap(find.text('Compare'));
+    await tester.pump();
+    expect(selection.kind, AnalysisPaneKind.compare);
+    await tester.tap(find.text('Residual'));
+    await tester.pump();
+    expect(selection.comparisonMode, ComparisonPlotMode.residual);
+    await tester.tap(find.text('±FS X'));
+    await tester.pump();
+    expect(selection.comparisonFullScaleX, isTrue);
+
+    await tester.tap(find.text('A: CH 0'));
+    await tester.pump();
+    await tester.tap(find.text('A: CH 2').last);
+    await tester.pump();
+    expect((selection.comparisonA, selection.comparisonB), (2, 1));
+
+    // Selecting the other pair member swaps instead of producing A == B.
+    await tester.tap(find.text('B: CH 1'));
+    await tester.pump();
+    await tester.tap(find.text('B: CH 2').last);
+    await tester.pump();
+    expect((selection.comparisonA, selection.comparisonB), (1, 2));
 
     expect(tester.takeException(), isNull);
   });

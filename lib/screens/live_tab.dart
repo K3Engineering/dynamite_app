@@ -100,6 +100,23 @@ class _LiveTabState extends State<LiveTab> {
     super.dispose();
   }
 
+  void _onAnalysisPaneChanged(AnalysisPaneSelection next) {
+    if (next.kind == AnalysisPaneKind.compare &&
+        _analysisPane.value.kind != AnalysisPaneKind.compare) {
+      // Compare opens on the whole retained loading history, not Live's usual
+      // 20 s rolling slice. The ordinary graph shares this window deliberately.
+      _graphCtrl.goLive(
+        span: _graphCtrl.defaultLiveSpan(
+          _hub!.totalSamples,
+          _hub!.oldestSample,
+        ),
+        totalSamples: _hub!.totalSamples,
+        oldestSample: _hub!.oldestSample,
+      );
+    }
+    _analysisPane.value = next;
+  }
+
   void _onTare() {
     // A session freezes tares at record start; refuse re-zeroing mid-recording.
     if (context.read<RecordingController>().sessionInProgress) {
@@ -284,7 +301,7 @@ class _LiveTabState extends State<LiveTab> {
                     ),
                     GraphViewControls(
                       selection: analysis,
-                      onPaneChanged: (s) => _analysisPane.value = s,
+                      onPaneChanged: _onAnalysisPaneChanged,
                       mathProfile: hub.mathProfile,
                       data: hub,
                       ctrl: _graphCtrl,

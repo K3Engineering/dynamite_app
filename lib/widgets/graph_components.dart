@@ -11,6 +11,7 @@ import 'package:meta/meta.dart';
 
 import '../models/analysis_pane.dart';
 import '../models/bucket_series.dart';
+import '../models/cell_comparison.dart';
 import '../models/channel_limits.dart';
 import '../models/derived_channel.dart';
 import '../models/device_profile.dart';
@@ -21,11 +22,15 @@ import '../models/load_cell.dart';
 import '../utils/fft.dart';
 import '../utils/nice_step.dart';
 import 'channel_palette.dart';
+import 'graph/affine2.dart';
+import 'graph/affine_dot_cache.dart';
 import 'graph/block_reduction_cache.dart';
 import 'graph/force_plate_cache.dart';
 import 'graph/graph_controller.dart';
 import 'graph/segmented_cache.dart';
 
+export 'graph/affine2.dart';
+export 'graph/affine_dot_cache.dart';
 export 'graph/force_plate_cache.dart';
 export 'graph/graph_controller.dart';
 export 'graph/segmented_cache.dart';
@@ -679,6 +684,10 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
   /// pane swaps): [ForcePlateCache] clears itself on its config stamp.
   final ForcePlateCache<_PlateMarker> _plateDotCache = ForcePlateCache();
 
+  /// Comparison dots share their raw (A, B-A) textures between Total and
+  /// Residual. Affine remapping covers scale changes and the detrending shear.
+  final AffineDotCache<ComparisonPoint> _comparisonDotCache = AffineDotCache();
+
   /// Memoized spectra for the FFT pane (throttles recompute, see [_FftCache]).
   final _FftCache _fftCache = _FftCache();
 
@@ -724,9 +733,10 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
       _onGeometrySourceChanged();
     }
     if (oldWidget.data != widget.data) {
-      // A swapped data source may alias the cache key (static sources share
-      // dataGeneration 0); drop the memo.
+      // A swapped data source may alias cache keys (static sources share
+      // dataGeneration 0), including pair/unit/tare combinations.
       _fftCache.clear();
+      _comparisonDotCache.clear();
     }
     if (oldWidget.analysis.kind != widget.analysis.kind) {
       _analysisCache?.dispose();
@@ -773,6 +783,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     _coordCache.dispose();
     _analysisCache?.dispose();
     _plateDotCache.dispose();
+    _comparisonDotCache.dispose();
     _forceLabels.dispose();
     _coordLabels.dispose();
     _analysisLabels.dispose();
@@ -848,6 +859,54 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
             corners: corners,
             unit: unit,
             cache: _plateDotCache,
+            colorScheme: colorScheme,
+            dpr: dpr,
+            labels: _analysisLabels,
+            bakePump: _bakePump,
+          ),
+        );
+      case AnalysisPaneKind.compare:
+        if (!unit.isForce) {
+          return _paneMessage(context, 'Compare: select a force unit');
+        }
+        final a = _ConvertedChannel.of(data, sel.comparisonA, unit);
+        final b = _ConvertedChannel.of(data, sel.comparisonB, unit);
+        if (a == null || b == null) {
+          final calA = data.calibrationFor(sel.comparisonA);
+          final calB = data.calibrationFor(sel.comparisonB);
+          final noCell = [
+            if (calA.loadCell == null) rigSlotTitle(sel.comparisonA),
+            if (calB.loadCell == null) rigSlotTitle(sel.comparisonB),
+          ];
+          final noBoard = [
+            if (calA.board == null) rigSlotTitle(sel.comparisonA),
+            if (calB.board == null) rigSlotTitle(sel.comparisonB),
+          ];
+          return _paneMessage(
+            context,
+            'Compare: ${[if (noCell.isNotEmpty) 'no load cell on ${noCell.join(', ')}', if (noBoard.isNotEmpty) 'no board data on ${noBoard.join(', ')}'].join(', ')}',
+          );
+        }
+        final qa = data.converterFor(sel.comparisonA).countQuantum(unit)!.abs();
+        final qb = data.converterFor(sel.comparisonB).countQuantum(unit)!.abs();
+        final fullScale =
+            data.calibrationFor(sel.comparisonA).loadCell!.capacityKg *
+            unit.kgfFactor!;
+        return _GraphPane(
+          data: data,
+          ctrl: ctrl,
+          painter: _CellComparisonPainter(
+            data,
+            _geometry,
+            a: a,
+            b: b,
+            mode: sel.comparisonMode,
+            fullScaleX: sel.comparisonFullScaleX,
+            fullScale: fullScale,
+            xQuantum: qa,
+            yQuantum: qa + qb,
+            unit: unit,
+            cache: _comparisonDotCache,
             colorScheme: colorScheme,
             dpr: dpr,
             labels: _analysisLabels,
@@ -1040,6 +1099,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
           AnalysisPaneKind.derivative => '. Rate-of-change graph below',
           AnalysisPaneKind.fft => '. Spectrum graph below',
           AnalysisPaneKind.plate => '. Two-axis position view below',
+          AnalysisPaneKind.compare => '. Load-cell comparison graph below',
         },
       ),
       child: Stack(
@@ -4028,6 +4088,346 @@ class _ForcePlatePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ForcePlatePainter oldDelegate) => true;
+}
+
+// ---------------------------------------------------------------------------
+// Load-cell comparison pane (2D, auto-ranged)
+// ---------------------------------------------------------------------------
+
+/// Paired calibrated force samples over the same time window as the force
+/// graph. X is reference A; raw Y is B-A. Residual mode subtracts the selected
+/// window's least-squares offset and gain before auto-ranging Y.
+class _CellComparisonPainter extends CustomPainter {
+  new(
+    this._data,
+    this._geo, {
+    required this.a,
+    required this.b,
+    required this.mode,
+    required this.fullScaleX,
+    required this.fullScale,
+    required this.xQuantum,
+    required this.yQuantum,
+    required this.unit,
+    required this.cache,
+    required this.colorScheme,
+    required this.dpr,
+    required this.labels,
+    required this.bakePump,
+  }) : super(repaint: Listenable.merge([_data.repaint, _geo, bakePump]));
+
+  final GraphDataSource _data;
+  final ValueListenable<_GraphGeometry> _geo;
+  final _ConvertedChannel a;
+  final _ConvertedChannel b;
+  final ComparisonPlotMode mode;
+  final bool fullScaleX;
+  final double fullScale;
+  final double xQuantum;
+  final double yQuantum;
+  final DisplayUnit unit;
+  final AffineDotCache<ComparisonPoint> cache;
+  final ColorScheme colorScheme;
+  final double dpr;
+  final AxisLabelCache labels;
+  final BakePump bakePump;
+
+  static const double _dotRadius = 1.4;
+  static const int _dotAlpha = 160;
+
+  // Analysis ignores plot size and display mode: switching Total/Residual
+  // neither rescans samples nor invalidates textures.
+  List<Object?>? _analysisKey;
+  ComparisonAnalysis? _analysis;
+
+  Iterable<ComparisonPoint> _points(int start, int end) sync* {
+    for (int j = start; j < end; j++) {
+      final rawA = _data.rawValueAt(a.channel, j);
+      final rawB = _data.rawValueAt(b.channel, j);
+      if (rawA.isNaN || rawB.isNaN) continue;
+      final x = a.netMap(rawA);
+      final y = b.netMap(rawB) - x;
+      if (!x.isFinite || !y.isFinite) continue;
+      yield (x: x, deviation: y);
+    }
+  }
+
+  ComparisonAnalysis? _analysisFor(int start, int end) {
+    final key = <Object?>[
+      start,
+      end,
+      _data.totalSamples,
+      _data.oldestSample,
+      _data.dataGeneration,
+      _data.calibrationVersion,
+      _data.tareVersion,
+      unit,
+      a.channel,
+      b.channel,
+    ];
+    if (!listEquals(key, _analysisKey)) {
+      _analysisKey = key;
+      _analysis = analyzeComparison(_points(start, end));
+    }
+    return _analysis;
+  }
+
+  ComparisonPoint? _renderDots(
+    Canvas canvas,
+    int start,
+    int end,
+    ({double x, double y}) Function(double x, double y) project,
+    Paint paint,
+  ) {
+    ComparisonPoint? newest;
+    for (final point in _points(start, end)) {
+      final p = project(point.x, point.deviation);
+      canvas.drawCircle(Offset(p.x, p.y), _dotRadius, paint);
+      newest = point;
+    }
+    return newest;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    labels.beginPass();
+    const topSpace = 18.0;
+    const bottomSpace = 22.0;
+    final plotW = size.width - _kGraphLeftSpace - kGraphRightSpace;
+    final plotH = size.height - topSpace - bottomSpace;
+    if (plotW <= 0 || plotH <= 0) return;
+
+    final geo = _geo.value;
+    final totalSamples = _data.totalSamples;
+    final viewStart = geo.viewStart.floor();
+    final viewEnd = math.min(geo.viewEnd, totalSamples.toDouble()).ceil();
+    final start = math.max(viewStart, _data.oldestSample);
+    final end = math.min(viewEnd, totalSamples);
+    final analysis = start < end ? _analysisFor(start, end) : null;
+
+    canvas.translate(_kGraphLeftSpace, topSpace);
+    void message(String text) {
+      final par = labels.prepare(
+        text,
+        color: colorScheme.onSurfaceVariant,
+        maxWidth: plotW,
+      );
+      canvas.drawParagraph(
+        par,
+        Offset(
+          math.max(0, (plotW - par.longestLine) / 2),
+          math.max(0, (plotH - par.height) / 2),
+        ),
+      );
+    }
+
+    if (analysis == null) {
+      message('No paired samples in the selected window');
+      return;
+    }
+    final fit = analysis.fit;
+    if (mode == .residual && fit == null) {
+      message('Residual requires samples at different loads');
+      return;
+    }
+
+    final summary = switch (fit) {
+      null => 'Offset and gain require a load sweep',
+      final f => () {
+        final residual = analysis.residualBounds!;
+        final residualMax = math.max(residual.min.abs(), residual.max.abs());
+        final magnitude = residualMax == 0 ? yQuantum : residualMax;
+        final rung = unit.axisRung(magnitude);
+        final decimals = DisplayUnit.axisDecimalsFor(
+          niceStepCeil(magnitude / rung.factor / 4),
+        );
+        final residualText =
+            '${(residualMax / rung.factor).toStringAsFixed(decimals)} '
+            '${rung.symbol}';
+        final gain = f.gainMismatch * 100;
+        return 'Offset ${unit.format(f.offset)}   '
+            'Gain ${gain >= 0 ? '+' : ''}${gain.toStringAsFixed(2)}%   '
+            'Residual ±$residualText';
+      }(),
+    };
+    final summaryPar = labels.prepare(
+      summary,
+      color: colorScheme.onSurfaceVariant,
+      maxWidth: plotW,
+    );
+    canvas.drawParagraph(summaryPar, const Offset(0, -17));
+
+    final requestedX = fullScaleX
+        ? fullScaleComparisonX(fullScale)
+        : autoComparisonX(analysis, quantum: xQuantum);
+    final requestedY = symmetricComparisonY(
+      mode == .total ? analysis.deviation : analysis.residualBounds!,
+      quantum: yQuantum,
+    );
+    final xRange = _computeYRange(requestedX.min, requestedX.max, unit, plotW);
+    final yRange = _computeYRange(requestedY.min, requestedY.max, unit, plotH);
+    final projection = Affine2.plot(
+      xMin: xRange.yMin,
+      xMax: xRange.yMax,
+      yMin: yRange.yMin,
+      yMax: yRange.yMax,
+      width: plotW,
+      height: plotH,
+      offset: mode == .residual ? fit!.offset : 0,
+      slope: mode == .residual ? fit!.gainMismatch : 0,
+    );
+
+    String tickLabel(double value, YAxisRange range) => _formatTickLabel(
+      value / range.rung.factor,
+      range.rung.symbol,
+      range.decimals,
+    );
+    final gridMinor = Path();
+    final gridMajor = Path();
+    final graphSize = Size(plotW, plotH);
+    _drawAxis(
+      canvas,
+      gridMinor,
+      gridMajor,
+      graphSize,
+      orientation: .x,
+      lines: _enumAxisLines(
+        xRange.yMin,
+        xRange.yMax,
+        step: xRange.tickDelta,
+        stepCeil: niceStepCeil,
+        enumSlack: 0,
+        labelFor: (v) => tickLabel(v, xRange),
+        posOf: (v) => (v - xRange.yMin) / (xRange.yMax - xRange.yMin) * plotW,
+        labels: labels,
+        textColor: colorScheme.onSurfaceVariant,
+      ),
+      showLabels: true,
+    );
+    _drawAxis(
+      canvas,
+      gridMinor,
+      gridMajor,
+      graphSize,
+      orientation: .y,
+      lines: _enumAxisLines(
+        yRange.yMin,
+        yRange.yMax,
+        step: yRange.tickDelta,
+        stepCeil: niceStepCeil,
+        enumSlack: 0,
+        labelFor: (v) => tickLabel(v, yRange),
+        posOf: (v) => (yRange.yMax - v) / (yRange.yMax - yRange.yMin) * plotH,
+        labels: labels,
+        textColor: colorScheme.onSurfaceVariant,
+      ),
+      showLabels: true,
+    );
+    canvas
+      ..drawPath(
+        gridMinor,
+        Paint()
+          ..color = colorScheme.outlineVariant.withAlpha(70)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.5,
+      )
+      ..drawPath(
+        gridMajor,
+        Paint()
+          ..color = colorScheme.outlineVariant.withAlpha(120)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.8,
+      );
+
+    Offset pointFor(double x, double y) {
+      final p = projection.project(x, y);
+      return Offset(p.x, p.y);
+    }
+
+    canvas.save();
+    canvas.clipRect(Rect.fromLTWH(0, 0, plotW, plotH));
+    final trail = cache.paint(canvas, (
+      generation: _data.dataGeneration,
+      destructiveKey: [
+        unit,
+        _data.calibrationVersion,
+        _data.tareVersion,
+        a.channel,
+        b.channel,
+      ],
+      width: plotW,
+      height: plotH,
+      dpr: dpr,
+      projection: projection,
+      viewStart: viewStart,
+      viewEnd: viewEnd,
+      oldestSample: _data.oldestSample,
+      totalSamples: totalSamples,
+      render: (c, s, e, project) => _renderDots(
+        c,
+        s,
+        e,
+        project,
+        Paint()..color = colorScheme.primary.withAlpha(_dotAlpha),
+      ),
+    ));
+    final marker = trail.marker;
+
+    // Total draws zero deviation. Residual maps the identified line to that
+    // same horizontal baseline through the projection's shear.
+    final lineY = projection.project(0, mode == .total ? 0 : fit!.offset).y;
+    canvas.drawLine(
+      Offset(0, lineY),
+      Offset(plotW, lineY),
+      Paint()
+        ..color = colorScheme.onSurface.withAlpha(160)
+        ..strokeWidth = 0.8,
+    );
+    if (xRange.yMin < 0 && xRange.yMax > 0) {
+      final zeroX = pointFor(0, mode == .residual ? fit!.offset : 0).dx;
+      canvas.drawLine(
+        Offset(zeroX, 0),
+        Offset(zeroX, plotH),
+        Paint()
+          ..color = colorScheme.onSurface.withAlpha(110)
+          ..strokeWidth = 0.7,
+      );
+    }
+    if (mode == .total && fit != null) {
+      canvas.drawLine(
+        pointFor(xRange.yMin, fit.offset + fit.gainMismatch * xRange.yMin),
+        pointFor(xRange.yMax, fit.offset + fit.gainMismatch * xRange.yMax),
+        Paint()
+          ..color = colorScheme.tertiary
+          ..strokeWidth = 1.2,
+      );
+    }
+    if (marker != null) {
+      final center = pointFor(marker.x, marker.deviation);
+      canvas
+        ..drawCircle(center, 3.5, Paint()..color = colorScheme.primary)
+        ..drawCircle(
+          center,
+          3.5,
+          Paint()
+            ..color = colorScheme.surface
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1,
+        );
+    }
+    canvas.restore();
+
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, plotW, plotH),
+      Paint()
+        ..color = colorScheme.outlineVariant
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.5,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _CellComparisonPainter oldDelegate) => true;
 }
 
 // ---------------------------------------------------------------------------
