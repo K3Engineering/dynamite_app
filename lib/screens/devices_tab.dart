@@ -489,24 +489,7 @@ class _InactiveDeviceRow extends StatelessWidget {
   }
 }
 
-/// The active row's Cancel/Disconnect style: OutlinedButtons don't inherit the
-/// tile's themed foreground, so declare it; reduced padding fits the label.
-ButtonStyle activeRowActionButtonStyle({required Color onContainer}) =>
-    OutlinedButton.styleFrom(
-      foregroundColor: onContainer,
-      disabledForegroundColor: onContainer.withValues(alpha: 0.5),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-    ).copyWith(
-      side: WidgetStateProperty.resolveWith(
-        (states) => BorderSide(
-          color: states.contains(WidgetState.disabled)
-              ? onContainer.withValues(alpha: 0.5)
-              : onContainer,
-        ),
-      ),
-    );
-
-/// The active device row.
+/// The active device row (shared by the BLE and Demo sections).
 class _ActiveDeviceRow extends StatelessWidget {
   const new({
     required this.name,
@@ -544,7 +527,7 @@ class _ActiveDeviceRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final status = Theme.of(context).extension<StatusColors>()!;
     final visual = btActiveLinkVisual(linkState: linkState, status: status);
-    final onContainer = status.onStateContainer;
+    final scheme = Theme.of(context).colorScheme;
     final isConnecting = linkState == BtLinkState.connecting;
     final isDisconnecting = linkState == BtLinkState.disconnecting;
 
@@ -560,7 +543,10 @@ class _ActiveDeviceRow extends StatelessWidget {
         SizedBox(
           width: deviceActionButtonWidth,
           child: OutlinedButton(
-            style: activeRowActionButtonStyle(onContainer: onContainer),
+            // Reduced padding (M3 default is 24) so "Disconnecting…" fits.
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+            ),
             onPressed: isDisconnecting ? null : onDisconnect,
             child: Text(
               isDisconnecting
@@ -574,81 +560,109 @@ class _ActiveDeviceRow extends StatelessWidget {
       ],
     );
 
-    return ListTileTheme(
-      data: ListTileThemeData(selectedColor: onContainer),
-      child: Card(
-        color: status.stateContainer,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            // Wide: buttons ride in the tile's trailing. Narrow: the trailing
-            // would leave no text lane, so they move to their own row.
-            final wide = constraints.maxWidth >= _activeRowSingleRowWidth;
-            final tile = ListTile(
-              selected: true,
-              minLeadingWidth: 28,
-              horizontalTitleGap: 8,
-              leading: Stack(
-                alignment: .center,
-                children: [
-                  Icon(icon ?? visual.icon, color: visual.color),
-                  if (visual.showSpinner)
-                    SizedBox(
-                      width: 28,
-                      height: 28,
-                      // Spinners don't participate in tile theming; color it
-                      // explicitly or it defaults to primary on the dark surface.
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation(onContainer),
-                      ),
+    return Card(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Wide: buttons ride in the tile's trailing. Narrow: the trailing
+          // would leave no text lane, so they move to their own row.
+          final wide = constraints.maxWidth >= _activeRowSingleRowWidth;
+          final tile = ListTile(
+            minLeadingWidth: 28,
+            horizontalTitleGap: 8,
+            leading: Stack(
+              alignment: .center,
+              children: [
+                Icon(icon ?? visual.icon, color: visual.color),
+                if (visual.showSpinner)
+                  SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation(scheme.onSurface),
                     ),
-                ],
-              ),
-              title: Text(name),
-              // One Text.rich so the label wraps at word boundaries; a Row would
-              // squeeze it to near-zero width on a phone.
-              subtitle: Column(
-                crossAxisAlignment: .start,
-                mainAxisSize: .min,
-                children: [
+                  ),
+              ],
+            ),
+            title: Row(
+              children: [
+                Flexible(child: Text(name, overflow: .ellipsis)),
+                const SizedBox(width: 8),
+                Flexible(child: _LinkStateBadge(label: visual.label)),
+              ],
+            ),
+            subtitle: Column(
+              crossAxisAlignment: .start,
+              mainAxisSize: .min,
+              children: [
+                // Model and live RSSI (native only); RSSI is absent before
+                // its first read lands, and forever on the web.
+                if (model != null || connectedRssi != null)
                   Text.rich(
                     TextSpan(
                       children: [
-                        TextSpan(text: visual.label),
-                        if (model != null) TextSpan(text: ' • $model'),
-                        if (connectedRssi != null) ...[
+                        if (model != null) TextSpan(text: model),
+                        if (model != null && connectedRssi != null)
                           const TextSpan(text: ' • '),
+                        if (connectedRssi != null)
                           WidgetSpan(
                             alignment: .middle,
                             child: RssiIndicator(
                               rssi: connectedRssi,
-                              color: onContainer,
+                              color: scheme.onSurface,
                             ),
                           ),
-                        ],
                       ],
                     ),
                   ),
-                  FeedHealthIndicator(
-                    health: context.read<FeedHealthTracker>().health,
-                  ),
-                  FirmwareUpdateNotice(onReview: onReviewUpdate),
-                ],
-              ),
-              trailing: wide ? actions : null,
-            );
-            if (wide) return tile;
-            return Column(
-              children: [
-                tile,
-                Padding(
-                  padding: const EdgeInsets.only(right: 24, bottom: 8),
-                  child: Align(alignment: .centerEnd, child: actions),
+                FeedHealthIndicator(
+                  health: context.read<FeedHealthTracker>().health,
+                ),
+                FirmwareUpdateNotice(
+                  accent: scheme.primary,
+                  onReview: onReviewUpdate,
                 ),
               ],
-            );
-          },
-        ),
+            ),
+            trailing: wide ? actions : null,
+          );
+          if (wide) return tile;
+          return Column(
+            children: [
+              tile,
+              Padding(
+                padding: const EdgeInsets.only(right: 24, bottom: 8),
+                child: Align(alignment: .centerEnd, child: actions),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Link state on a compact tinted badge rather than on the whole active row.
+class _LinkStateBadge extends StatelessWidget {
+  const new({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = Theme.of(context).extension<StatusColors>()!;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: status.stateContainer,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: .ellipsis,
+        style: Theme.of(context).textTheme.labelSmall
+            ?.copyWith(color: status.onStateContainer, fontWeight: .w600),
       ),
     );
   }

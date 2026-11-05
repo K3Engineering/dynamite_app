@@ -24,12 +24,12 @@ import 'package:dynamite_app/services/recording_controller.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/services/session_metadata.dart';
 import 'package:dynamite_app/services/stream_reset_coordinator.dart';
+import 'package:dynamite_app/status_colors.dart';
 
 /// Layout contract for the Devices tab's action buttons: Scan/Stop (status
 /// row), Connect (inactive rows) and Cancel/Disconnect (active row) all share
-/// [deviceActionButtonWidth] and one right-edge column, and the active row's
-/// outlined button takes the row's content color (the gear/title's
-/// onPrimaryContainer) for its outline and label, dimmed while disabled.
+/// [deviceActionButtonWidth] and one right-edge column. The active row uses a
+/// normal Card and carries its link state on a compact tinted badge.
 ///
 /// Driven through the real app shell with the mock BLE platform installed
 /// (same harness as widget_test.dart). The demo device provides the active
@@ -172,7 +172,7 @@ void main() {
     expect(scan.right, moreOrLessEquals(connect.right, epsilon: 0.01));
   });
 
-  testWidgets('active-row Disconnect keeps the column and the row colors', (
+  testWidgets('active row keeps the action column and compact link badge', (
     tester,
   ) async {
     await pumpApp(tester);
@@ -189,14 +189,35 @@ void main() {
     expect(disconnect.height, scan.height);
     expect(disconnect.right, moreOrLessEquals(scan.right, epsilon: 0.01));
 
-    // Outline + label take the row's content color (light theme: white),
-    // dimmed to half alpha while teardown is in flight (disabled).
+    final card = tester.widget<Card>(
+      find.ancestor(of: disconnectButton(), matching: find.byType(Card)),
+    );
+    expect(card.color, isNull);
+
+    final badgeText = devicesTabDescendant(find.text('Connected'));
+    expect(badgeText, findsOneWidget);
+    final badge = tester.widget<Container>(
+      find.ancestor(
+        of: badgeText,
+        matching: find.byWidgetPredicate(
+          (widget) => widget is Container && widget.child is Text,
+        ),
+      ),
+    );
+    final status = Theme.of(tester.element(badgeText))
+        .extension<StatusColors>()!;
+    final decoration = badge.decoration! as BoxDecoration;
+    expect(decoration.color, status.stateContainer);
+    expect(decoration.borderRadius, BorderRadius.circular(4));
+    expect(
+      tester.widget<Text>(badgeText).style?.color,
+      status.onStateContainer,
+    );
+
+    // Cancel/Disconnect use the normal surface's OutlinedButton colors.
     final style = tester.widget<OutlinedButton>(disconnectButton()).style!;
-    final enabled = style.side!.resolve(<WidgetState>{})!;
-    final disabled = style.side!.resolve(<WidgetState>{WidgetState.disabled})!;
-    expect(enabled.color, Colors.white);
-    expect(disabled.color, Colors.white.withValues(alpha: 0.5));
-    expect(style.foregroundColor!.resolve(<WidgetState>{}), Colors.white);
+    expect(style.foregroundColor, isNull);
+    expect(style.side, isNull);
 
     // Teardown: bring the demo link down so its feed timer stops, then drain
     // the command-queue timeout (see widget_test.dart).

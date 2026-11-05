@@ -3,7 +3,6 @@ import 'package:material_ui/material_ui.dart';
 
 import '../models/feed_health.dart';
 import 'feed_health_text.dart';
-import '../status_colors.dart';
 
 /// The one-line feed-health readout ("Packets malformed…", "No data from
 /// device", "Stream stopped") the Devices tab renders under the connected
@@ -24,9 +23,7 @@ class FeedHealthIndicator extends StatelessWidget {
       builder: (context, health, _) {
         final label = health?.shortLabel;
         if (label == null) return const SizedBox.shrink();
-        final color = Theme.of(context)
-            .extension<StatusColors>()!
-            .onConnectedWarning;
+        final color = Theme.of(context).colorScheme.error;
         return Row(
           children: [
             Icon(Icons.error_outline, size: 14, color: color),

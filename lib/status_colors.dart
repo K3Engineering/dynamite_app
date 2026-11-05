@@ -18,9 +18,8 @@ class StatusColors extends ThemeExtension<StatusColors> {
     required this.onWarningContainer,
   });
 
-  /// Prominent device-state surfaces: the connected row/banner and the
-  /// firmware-update card. Independent of [ColorScheme.primary], which owns
-  /// action styling.
+  /// Device-state surfaces: the link badge, Live banner and firmware-update
+  /// card. Independent of [ColorScheme.primary], which owns action styling.
   final Color stateContainer;
   final Color onStateContainer;
 
