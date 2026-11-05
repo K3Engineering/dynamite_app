@@ -3,7 +3,7 @@ import 'package:meta/meta.dart';
 
 /// Semantic status colors that [ColorScheme] doesn't provide.
 ///
-/// Registered on both app themes in `main.dart`; read via
+/// Registered on both app themes in `app_theme.dart`; read via
 /// `Theme.of(context).extension<StatusColors>()!`.
 @immutable
 class StatusColors extends ThemeExtension<StatusColors> {
