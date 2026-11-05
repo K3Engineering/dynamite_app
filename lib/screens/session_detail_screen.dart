@@ -80,6 +80,18 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     }
   }
 
+  void _onAnalysisPaneChanged(SessionData data, AnalysisPaneSelection next) {
+    if (next.kind == AnalysisPaneKind.compare &&
+        _analysisPane.value.kind != AnalysisPaneKind.compare) {
+      _graphCtrl.goLive(
+        span: _graphCtrl.defaultLiveSpan(data.totalSamples, data.oldestSample),
+        totalSamples: data.totalSamples,
+        oldestSample: data.oldestSample,
+      );
+    }
+    _analysisPane.value = next;
+  }
+
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
@@ -281,7 +293,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                   ),
                   GraphViewControls(
                     selection: analysis,
-                    onPaneChanged: (s) => _analysisPane.value = s,
+                    onPaneChanged: (s) => _onAnalysisPaneChanged(data, s),
                     mathProfile: data.mathProfile,
                     data: data,
                     ctrl: _graphCtrl,
