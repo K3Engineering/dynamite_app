@@ -225,21 +225,24 @@ void main() {
       await tester.pump(const Duration(seconds: 6));
     }
 
-    testWidgets('Devices tab active row shows the model in its subtitle', (
-      tester,
-    ) async {
-      final link = await pumpApp(tester);
-      await connectDemo(tester);
+    testWidgets(
+      'Devices tab active row separates the link badge and subtitle',
+      (tester) async {
+        final link = await pumpApp(tester);
+        await connectDemo(tester);
 
-      expect(
-        devicesTabDescendant(
-          find.text('Connected • Dynamite Sampler Demo', findRichText: true),
-        ),
-        findsOneWidget,
-      );
+        // Link state sits in the badge; the model alone is the subtitle.
+        expect(devicesTabDescendant(find.text('Connected')), findsOneWidget);
+        expect(
+          devicesTabDescendant(
+            find.text('Dynamite Sampler Demo', findRichText: true),
+          ),
+          findsOneWidget,
+        );
 
-      await teardownDemo(tester, link);
-    });
+        await teardownDemo(tester, link);
+      },
+    );
 
     testWidgets('Settings tab shows the device info card for the connected '
         'device', (tester) async {

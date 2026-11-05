@@ -185,6 +185,9 @@ class _LiveTabState extends State<LiveTab> {
               sampleRateHz: hub.sampleRateHz,
               health: health,
               firmwareNotice: FirmwareUpdateNotice(
+                accent: Theme.of(context)
+                    .extension<StatusColors>()!
+                    .stateAccent,
                 onReview: () =>
                     openFirmwareUpdate(context, onDone: widget.onGoToDevices),
               ),
