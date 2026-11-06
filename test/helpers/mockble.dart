@@ -56,6 +56,9 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// When false, the GATT table omits the ADC feed service.
   bool includeAdcService = true;
 
+  /// When false, the Device Information service omits Software Revision.
+  bool includeSoftwareRevision = true;
+
   /// When true, the ADC config read serves garbage, failing the connection.
   bool badAdcConfig = false;
 
@@ -152,6 +155,7 @@ class MockBlePlatform extends UniversalBlePlatform {
   void resetKnobs() {
     dropEveryNPackets = 0;
     includeAdcService = true;
+    includeSoftwareRevision = true;
     badAdcConfig = false;
     failKvsCommands = false;
     kvsCommandsToFail = 0;
@@ -403,8 +407,16 @@ class MockBlePlatform extends UniversalBlePlatform {
   }) async {
     // Static strings, served synchronously, like KVS answers.
     final String? disValue = _disValues[characteristic];
-    if (service == btSvcDeviceInfo && disValue != null) {
-      return Uint8List.fromList(utf8.encode(disValue));
+    if (service == btSvcDeviceInfo) {
+      if (characteristic == btChrDisSoftwareRev && !includeSoftwareRevision) {
+        throw UniversalBleException(
+          code: UniversalBleErrorCode.characteristicNotFound,
+          message: 'Software Revision characteristic not found',
+        );
+      }
+      if (disValue != null) {
+        return Uint8List.fromList(utf8.encode(disValue));
+      }
     }
     if (characteristic == btChrAdcConfig) {
       if (badAdcConfig) return Uint8List(3);
@@ -646,6 +658,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     btChrDisSerial: 'A4CF1208F51E',
     btChrDisHardwareRev: 'v700P',
     btChrDisFirmwareRev: 'mock-1.0.0',
+    btChrDisSoftwareRev: 'ESP-IDF mock-6.1',
   };
 
   static List<BleService> _generateServices(String deviceId) {
@@ -654,7 +667,11 @@ class MockBlePlatform extends UniversalBlePlatform {
         BleService('e1234567', _generateCharacteristics(deviceId)),
         BleService(btServiceId, _generateCharacteristics(deviceId)),
         BleService(btSvcDeviceInfo, [
-          for (final chr in _disValues.keys)
+          for (final chr in _disValues.keys.where(
+            (chr) =>
+                MockBlePlatform.instance.includeSoftwareRevision ||
+                chr != btChrDisSoftwareRev,
+          ))
             BleCharacteristic(chr, [CharacteristicProperty.read], []),
         ]),
         BleService(otaServiceId, [

@@ -44,10 +44,10 @@ abstract interface class LinkTransport {
   /// service or ADC feed characteristic is absent — an unusable link.
   Future<void> discoverServices();
 
-  /// Read the Device Information identity. Throws on failure — firmware
-  /// publishes every field, so an unreadable identity is a broken link
-  /// (the setup fails), never partial data. `serial` is null on web, where
-  /// 0x2A25 is GATT-blocklisted.
+  /// Read the Device Information identity. Throws on failure — current
+  /// firmware publishes every field. `serial` is null on web,
+  /// where 0x2A25 is GATT-blocklisted; `frameworkRev` is null on firmware
+  /// predating 0x2A28.
   Future<DeviceInfo> readDeviceInfo();
 
   /// Read the ADC boot config. Throws when unreadable — the conversions and
@@ -176,12 +176,24 @@ class BleLinkTransport implements LinkTransport {
       await UniversalBle.read(deviceId, btSvcDeviceInfo, characteristic),
     );
 
+    Future<String?> readSoftwareRev() async {
+      try {
+        return await readString(btChrDisSoftwareRev);
+      } on UniversalBleException catch (e) {
+        if (e.code == UniversalBleErrorCode.characteristicNotFound) {
+          return null;
+        }
+        rethrow;
+      }
+    }
+
     return DeviceInfo(
       manufacturer: await readString(btChrDisManufacturer),
       model: await readString(btChrDisModel),
       serial: kIsWeb ? null : await readString(btChrDisSerial),
       hardwareRev: await readString(btChrDisHardwareRev),
       firmwareRev: await readString(btChrDisFirmwareRev),
+      frameworkRev: await readSoftwareRev(),
     );
   });
 

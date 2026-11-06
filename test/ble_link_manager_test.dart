@@ -136,6 +136,7 @@ void main() {
       expect(info.serial, 'A4CF1208F51E');
       expect(info.hardwareRev, 'v700P');
       expect(info.firmwareRev, 'mock-1.0.0');
+      expect(info.frameworkRev, 'ESP-IDF mock-6.1');
       expect(link.negotiatedMtu, 247);
       expect(link.minAdcPacketBytes, 242);
       expect(link.maxAdcPacketBytes, 242);
@@ -156,6 +157,22 @@ void main() {
       expect(link.negotiatedMtu, isNull);
       expect(link.minAdcPacketBytes, isNull);
       expect(link.maxAdcPacketBytes, isNull);
+    });
+  });
+
+  test('firmware without Software Revision still connects', () {
+    fakeAsync((async) {
+      MockBlePlatform.instance.includeSoftwareRevision = false;
+      final (link, seen) = wire();
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+
+      expect(link.isStreaming, isTrue);
+      expect(link.connectedDeviceInfo!.frameworkRev, isNull);
+      expect(seen, isEmpty);
+
+      teardownLink(async, link);
     });
   });
 

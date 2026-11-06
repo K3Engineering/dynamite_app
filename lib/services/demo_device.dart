@@ -36,6 +36,7 @@ class DemoDevice implements LinkTransport, LinkBackend {
     serial: 'DEMO00000000',
     hardwareRev: 'demo',
     firmwareRev: 'demo',
+    frameworkRev: 'ESP-IDF demo',
   );
 
   /// The demo chain is Pro-like: AFE 101x, PGA 1x on every channel.

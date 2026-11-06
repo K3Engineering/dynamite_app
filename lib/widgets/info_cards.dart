@@ -6,7 +6,8 @@ import '../utils/format.dart';
 /// The connected sampler's static identity, read from the BLE Device
 /// Information service (0x180A) once per link at connect time. Purely
 /// read-only. The serial is always null on web (0x2A25 is blocklisted
-/// there) and renders as an em dash.
+/// there), and framework is null on firmware predating 0x2A28; either renders
+/// as an em dash.
 class DeviceInfoCard extends StatelessWidget {
   const new({super.key, required this.info});
 
@@ -22,6 +23,7 @@ class DeviceInfoCard extends StatelessWidget {
             infoRow('Model', info.model),
             infoRow('Hardware', info.hardwareRev),
             infoRow('Firmware', info.firmwareRev),
+            infoRow('Framework', info.frameworkRev),
             infoRow('Serial', info.serial),
             infoRow('Manufacturer', info.manufacturer),
           ],

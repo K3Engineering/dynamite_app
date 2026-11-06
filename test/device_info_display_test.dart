@@ -47,7 +47,7 @@ void main() {
       );
     }
 
-    testWidgets('renders all five identity fields', (tester) async {
+    testWidgets('renders all six identity fields', (tester) async {
       await pumpCard(
         tester,
         const DeviceInfo(
@@ -56,12 +56,14 @@ void main() {
           serial: 'A4CF1208F51E',
           hardwareRev: 'v700P',
           firmwareRev: 'v1.2.3',
+          frameworkRev: 'ESP-IDF v6.1',
         ),
       );
 
       expect(find.text('Dynamite Sampler Pro Mk1'), findsOneWidget);
       expect(find.text('v700P'), findsOneWidget);
       expect(find.text('v1.2.3'), findsOneWidget);
+      expect(find.text('ESP-IDF v6.1'), findsOneWidget);
       expect(find.text('A4CF1208F51E'), findsOneWidget);
       expect(find.text('K3 Engineering'), findsOneWidget);
       expect(find.text('—'), findsNothing);
@@ -77,10 +79,28 @@ void main() {
           model: 'Dynamite Sampler Pro Mk1',
           hardwareRev: 'v700P',
           firmwareRev: 'v1.2.3',
+          frameworkRev: 'ESP-IDF v6.1',
         ),
       );
       expect(find.text('—'), findsOneWidget);
       expect(find.text('Dynamite Sampler Pro Mk1'), findsOneWidget);
+    });
+
+    testWidgets('legacy firmware software revision renders as an em dash', (
+      tester,
+    ) async {
+      await pumpCard(
+        tester,
+        const DeviceInfo(
+          manufacturer: 'K3 Engineering',
+          model: 'Dynamite Sampler Pro Mk1',
+          serial: 'A4CF1208F51E',
+          hardwareRev: 'v700P',
+          firmwareRev: 'v1.2.3',
+        ),
+      );
+      expect(find.text('—'), findsOneWidget);
+      expect(find.text('Framework'), findsOneWidget);
     });
   });
 

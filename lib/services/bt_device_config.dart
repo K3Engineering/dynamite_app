@@ -23,3 +23,4 @@ const btChrDisModel = "00002a24-0000-1000-8000-00805f9b34fb";
 const btChrDisSerial = "00002a25-0000-1000-8000-00805f9b34fb";
 const btChrDisHardwareRev = "00002a27-0000-1000-8000-00805f9b34fb";
 const btChrDisFirmwareRev = "00002a26-0000-1000-8000-00805f9b34fb";
+const btChrDisSoftwareRev = "00002a28-0000-1000-8000-00805f9b34fb";
