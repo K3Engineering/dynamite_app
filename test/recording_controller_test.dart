@@ -41,6 +41,7 @@ void main() {
     serial: 'A4CF1208F51E',
     hardwareRev: 'v700P',
     firmwareRev: 'v1.2.3',
+    frameworkRev: 'ESP-IDF v6.1',
   );
 
   late Directory tmp;
@@ -198,6 +199,7 @@ void main() {
         'model': 'Dynamite Sampler Pro Mk1',
         'hardware_rev': 'v700P',
         'firmware': 'v1.2.3',
+        'framework': 'ESP-IDF v6.1',
         'manufacturer': 'K3 Engineering',
       });
       // Counts derive from the data, so the load is the truth.

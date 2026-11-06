@@ -16,5 +16,6 @@ Map<String, Object?> toSessionDeviceMetadata({
   'model': info.model,
   'hardware_rev': info.hardwareRev,
   'firmware': info.firmwareRev,
+  'framework': info.frameworkRev,
   'manufacturer': info.manufacturer,
 };
