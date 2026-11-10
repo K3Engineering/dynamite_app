@@ -3,17 +3,17 @@ import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:dynamite_app/widgets/graph/segmented_cache_functional.dart';
+import 'package:dynamite_app/widgets/graph/tile_cache_functional.dart';
 
 // Bounded model checking of the pure cache core: BFS over the states
 // REACHABLE from an empty cache under a discretized input universe
 // (windows, Y ranges, config churn, generations, bake horizons), verifying
 // on every single transition:
-//   * the segment-list invariant (invariantViolations);
+//   * the tile-list invariant (invariantViolations);
 //   * fold-window / bake-horizon containment of every bake (also asserted
-//     inside planBakes; checked here independently);
+//     inside stepCache; checked here independently);
 //   * texture ids stay unique, so the shell's reconcile-by-id frees only
-//     textures no segment names;
+//     textures no tile names;
 //   * progress: a frame that bakes must change the canonical state, so a
 //     constant input can never re-bake identical pixels forever (the
 //     bake-pump busy-loop shape).
@@ -27,31 +27,25 @@ import 'package:dynamite_app/widgets/graph/segmented_cache_functional.dart';
 //
 // One tier, tagged 'slow' and run as its own CI job: sized for a per-PR check
 // but not for the PR suite's wall time. A 12-sample universe reaches closure at
-// ~148k states in ~25 s on this repo; that is a budget to re-measure on planner
+// ~84k states in ~15 s on this repo; that is a budget to re-measure on planner
 // changes, not a constant of nature. Reachable-state count is strongly
 // superlinear in the universe size and in the number of STAMP axes (a gh or dpr
 // flip alone triples it), so the grid stays small and the churn set covers one
-// representative per staleness kind (generation reset, destructive flip, remap
+// representative per staleness kind (generation reset, suppress flip, ghost
 // flip, y-drift, receded horizon) instead of the product. Boundary-threshold
 // nuance (drift just past 8%) belongs to the unit tests and the sim.
 
-/// Deterministic canonical form: equal states (same metas, same stamps) hash
-/// identically regardless of list instance or meta identity. Null is the
-/// unstamped pre-first-frame state (see [prepareFrame]), which no real state
-/// can canonicalize to (`_canon` always emits stamps).
-String _canon(CacheState? s) {
-  if (s == null) return '#none';
-  final b = StringBuffer('g${s.generation};${s.gh};${s.dpr};');
-  b.writeAll(s.destructiveKey.map((k) => 'u$k'));
-  b.writeAll(s.remapKey.map((k) => 'r$k'));
-  b.write('|');
-  for (final m in s.segments) {
+/// Deterministic canonical form: equal tile metas hash identically regardless
+/// of list or meta identity. Texture IDs are shell identities, not cache shape.
+String _canon(CacheState s) {
+  final b = StringBuffer();
+  for (final m in s.tiles) {
     b.write(
-      '${m.start},${m.end},${m.contentW},${m.yMin},${m.yMax},'
-      '${m.gh},${m.dpr},${m.hPad},${m.vPad},',
+      '${m.start},${m.end},${m.pps},${m.yMin},${m.yMax},'
+      '${m.gh},${m.dpr},${m.generation},${m.hPad},${m.vPad},',
     );
-    b.writeAll(m.destructiveKey.map((k) => 'u$k'));
-    b.writeAll(m.remapKey.map((k) => 'r$k'));
+    b.writeAll(m.suppressKey.map((k) => 'u$k'));
+    b.writeAll(m.ghostKey.map((k) => 'r$k'));
     b.write(';');
   }
   return b.toString();
@@ -70,16 +64,16 @@ CacheConfig _config({
   required double viewSpan,
   required double yMax,
   required int totalSamples,
-  required int bakeableSamples,
+  required int bakeHorizon,
   int generation = 0,
   String destKey = 'u1',
-  String remapKey = 'k1',
+  String ghostKey = 'k1',
   double gh = 100,
   double dpr = 1,
 }) => (
   generation: generation,
-  destructiveKey: [destKey],
-  remapKey: [remapKey],
+  suppressKey: [destKey],
+  ghostKey: [ghostKey],
   gw: 400,
   gh: gh,
   dpr: dpr,
@@ -88,7 +82,7 @@ CacheConfig _config({
   yMin: 0,
   yMax: yMax,
   totalSamples: totalSamples,
-  bakeableSamples: bakeableSamples,
+  bakeHorizon: bakeHorizon,
   // Opaque to the planner (carried into metas, never read), so any constant
   // works; the value is irrelevant to what this test checks.
   hPad: 4,
@@ -116,15 +110,14 @@ void main() {
             viewSpan: span,
             yMax: 100,
             totalSamples: universe,
-            bakeableSamples: universe,
+            bakeHorizon: universe,
           ),
         );
       }
     }
-    // Fractional windows (the smooth-scroll lead makes every live frame
-    // fractional): floor/ceil off-by-ones in the coverage window shave
-    // 1-sample edge slivers, baked at span-8 pps.
-    for (final vs in [2.5, 10.3]) {
+    // Fractional and negative-start windows (smooth-scroll lead makes live
+    // frames fractional; young live views overhang sample 0 on the left).
+    for (final vs in [-4.0, 2.5, 10.3]) {
       for (final span in [8.0, 16.0]) {
         inputs.add(
           _config(
@@ -132,7 +125,7 @@ void main() {
             viewSpan: span,
             yMax: 100,
             totalSamples: universe,
-            bakeableSamples: universe,
+            bakeHorizon: universe,
           ),
         );
       }
@@ -152,7 +145,7 @@ void main() {
             viewSpan: 16,
             yMax: yMax,
             totalSamples: universe,
-            bakeableSamples: universe,
+            bakeHorizon: universe,
           ),
         );
       }
@@ -163,7 +156,7 @@ void main() {
             viewSpan: 16,
             yMax: 100,
             totalSamples: universe,
-            bakeableSamples: bakeable,
+            bakeHorizon: bakeable,
           ),
         );
       }
@@ -173,7 +166,7 @@ void main() {
           viewSpan: 16,
           yMax: 100,
           totalSamples: universe,
-          bakeableSamples: universe,
+          bakeHorizon: universe,
           generation: 1,
         ),
         _config(
@@ -181,7 +174,7 @@ void main() {
           viewSpan: 16,
           yMax: 100,
           totalSamples: universe,
-          bakeableSamples: universe,
+          bakeHorizon: universe,
           destKey: 'u2',
         ),
         _config(
@@ -189,8 +182,8 @@ void main() {
           viewSpan: 16,
           yMax: 100,
           totalSamples: universe,
-          bakeableSamples: universe,
-          remapKey: 'k2',
+          bakeHorizon: universe,
+          ghostKey: 'k2',
         ),
       ]);
     }
@@ -199,16 +192,9 @@ void main() {
       if (!ok) throw StateError('model check violation: $reason');
     }
 
-    // Reachable states, seeded with the unstamped start state; the count is
-    // the deterministic growth signal the budget at the end checks.
-    final seen = <String>{_canon(null)};
-    // Serial source for the shell's texture ids. Must NOT appear in _canon:
-    // two states differing only in ids are the same cache state.
-    var nextTextureId = 0;
-    // FIFO (arrival depth is the shortest path, so the closure report is
-    // meaningful) seeded with "no state yet": the unstamped cache is a state
-    // of its own, and the only one that is null.
-    final frontier = Queue<(int, CacheState?)>()..add((0, null));
+    // Texture IDs are shell identities and deliberately excluded from _canon.
+    final seen = <String>{_canon(const CacheState())};
+    final frontier = Queue<(int, CacheState)>()..add((0, const CacheState()));
     var edges = 0, bakeEdges = 0, capped = false;
 
     while (frontier.isNotEmpty) {
@@ -221,31 +207,19 @@ void main() {
       for (final input in inputs) {
         edges++;
         final env = cacheEnvFor(input);
-        final prepared = prepareFrame(s, env);
-        final plan = planBakes(prepared, env);
+        final step = stepCache(s, input);
+        final plan = step.frame.bake;
+        final next = step.state;
         if (plan != null) {
           check(
             plan.start >= env.covStart &&
                 plan.end <= env.covEnd &&
-                plan.end <= input.bakeableSamples,
+                plan.end <= input.bakeHorizon,
             'bake [${plan.start}, ${plan.end}) outside fold window '
             '[${env.covStart}, ${env.covEnd}) or past horizon '
-            '${input.bakeableSamples}',
+            '${input.bakeHorizon}',
           );
         }
-        // The shell's half of the frame, faked: the rendered width the
-        // render closure would report, and the serial id it would file under.
-        final measured = switch (plan) {
-          final BakePlan p => (
-            plan: p,
-            contentW: math
-                .max(1, ((p.end - p.start) * env.pps).ceil())
-                .toDouble(),
-            textureId: nextTextureId++,
-          ),
-          null => null,
-        };
-        final next = applyBake(prepared, env, measured);
         if (plan != null) {
           bakeEdges++;
           // Progress: a bake frame must move the state, so a constant
@@ -257,75 +231,76 @@ void main() {
           // The bake's meta landed at the plan's insertion point, carrying the
           // id the shell filed its texture under.
           check(
-            next.segments[plan.from].textureId == nextTextureId - 1,
+            next.tiles[plan.from].textureId == s.nextTextureId,
             'a committed bake filed no meta',
           );
         }
         final violations = invariantViolations(next);
         check(violations.isEmpty, violations.join('; '));
         // Retirement, stated without the core's own predicate so it is a real
-        // net: no segment prepareFrame hands on may be past the eviction
+        // net: no tile stepCache hands on may be past the eviction
         // margin, nor content-stale with no sample left inside the window at
         // or below the horizon. The latter is the case that matters: such a
-        // segment blits frozen pixels in the horizon zone forever, because the
+        // tile blits frozen pixels in the horizon zone forever, because the
         // sweep could only drop it, never re-bake it.
         //
-        // Kept segments only. The other direction (a fresh segment must not be
-        // retired) is not expressible this way: prepareFrame also drops
-        // off-view segments on a config bump, so "dropped implies stale" is
-        // false by design. segmented_cache_retire_test pins that direction.
-        bool pastMargin(SegmentMeta m) =>
-            m.end < env.covStart - kSegmentEvictionMargin * env.targetSpan ||
-            m.start > env.covEnd + kSegmentEvictionMargin * env.targetSpan;
-        bool contentStale(SegmentMeta m) =>
-            !_sameKey(m.destructiveKey, prepared.destructiveKey) ||
-            !_sameKey(m.remapKey, prepared.remapKey) ||
-            (m.gh - prepared.gh).abs() > 0.1 ||
-            m.dpr != prepared.dpr ||
+        // Kept tiles only. The other direction (a fresh tile must not be
+        // retired) is not expressible this way: stepCache also drops
+        // off-view tiles on a config bump, so "dropped implies stale" is
+        // false by design. tile_cache_retire_test pins that direction.
+        bool pastMargin(TileMeta m) =>
+            m.end < env.covStart - kTileEvictionMargin * env.targetSpan ||
+            m.start > env.covEnd + kTileEvictionMargin * env.targetSpan;
+        bool contentStale(TileMeta m) =>
+            m.generation != input.generation ||
+            !_sameKey(m.suppressKey, input.suppressKey) ||
+            !_sameKey(m.ghostKey, input.ghostKey) ||
+            (m.gh - input.gh).abs() > 0.1 ||
+            m.dpr != input.dpr ||
             math.max(
-                  (1 - (m.end - m.start) * env.pps / m.contentW).abs(),
+                  (1 - env.pps / m.pps).abs(),
                   (1 - (m.yMax - m.yMin) / (input.yMax - input.yMin)).abs(),
                 ) >
-                kMaxSegmentDrift;
-        bool noRefreshableSample(SegmentMeta m) =>
-            math.min(m.end, math.min(input.bakeableSamples, env.covEnd)) <=
+                kMaxTileDrift;
+        bool noRefreshableSample(TileMeta m) =>
+            math.min(m.end, math.min(input.bakeHorizon, env.covEnd)) <=
             math.max(m.start, env.covStart);
-        bool shouldRetire(SegmentMeta m) =>
+        bool shouldRetire(TileMeta m) =>
             m.end > env.covStart &&
             m.start < env.covEnd &&
             contentStale(m) &&
             noRefreshableSample(m);
-        for (final m in prepared.segments) {
+        for (final m in next.tiles) {
           check(
             !pastMargin(m) && !shouldRetire(m),
-            'prepareFrame kept [${m.start},${m.end}) '
+            'stepCache kept [${m.start},${m.end}) '
             '(pastMargin=${pastMargin(m)} shouldRetire=${shouldRetire(m)}) '
             'at win=[${env.covStart},${env.covEnd}) '
-            'horizon=${input.bakeableSamples}',
+            'horizon=${input.bakeHorizon}',
           );
         }
-        // Segments the frame dropped are gone from the state, and every
-        // surviving segment's texture id is unique -- the shell reconciles its
+        // Tiles the frame dropped are gone from the state, and every
+        // surviving tile's texture id is unique -- the shell reconciles its
         // texture map against exactly this list (see _reconcileTextures), so a
         // survived drop would free a texture still in use.
-        final ids = {for (final m in next.segments) m.textureId};
-        check(
-          ids.length == next.segments.length,
-          'two segments share a texture id',
-        );
+        final ids = {for (final m in next.tiles) m.textureId};
+        check(ids.length == next.tiles.length, 'two tiles share a texture id');
         // Coverage completeness, measured against the window computed
         // from FIRST PRINCIPLES (locals -- a wrong cacheEnvFor derivation
         // is self-consistent and the containment checks above cannot see
         // it; the floor/ceil-swap mutant survives without this): what the
         // frame would draw must cover the whole intended window.
-        final wantStart = input.viewStart.floor();
-        final wantEnd = math.min(
-          (input.viewStart + input.viewSpan).ceil(),
-          input.totalSamples,
+        final wantStart = math.max(0, input.viewStart.floor());
+        final wantEnd = math.max(
+          wantStart,
+          math.min(
+            (input.viewStart + input.viewSpan).ceil(),
+            input.totalSamples,
+          ),
         );
-        final raster = rasterPlan(next, env);
+        final raster = step.frame;
         final intervals = [
-          for (final m in next.segments)
+          for (final m in next.tiles)
             (math.max(m.start, wantStart), math.min(m.end, wantEnd)),
           for (final g in raster.gaps) (g.start, g.end),
         ]..sort((a, b) => a.$1.compareTo(b.$1));

@@ -45,6 +45,10 @@ void main() {
       // Locked to the 200-sample span: the window tracks the right edge.
       expect(ctrl.effectiveRange(1000, 0), (800, 1000));
       expect(ctrl.effectiveRange(1200, 0), (1000, 1200));
+
+      ctrl.applyWindow(2000, 200, 1000, 0);
+      expect(ctrl.isLive, isTrue);
+      expect(ctrl.effectiveRange(1000, 0), (800, 1000));
     });
   });
 
@@ -218,34 +222,113 @@ void main() {
     });
   });
 
-  /// The viewport-side half of the per-stream reset: when a new device stream
-  /// clears the hub, the live tab snaps the controller back to live follow.
-  /// That reset is the ONLY guard: a parked window must not outlive the data,
-  /// and [effectiveRange] asserts the invariant rather than silently clamping
-  /// a violation.
+  /// Every viewport carries stream identity. Same-generation corruption fails
+  /// in release too; a generation change reconciles to the initial viewport.
   group('GraphController across a stream reset', () {
     test('a stale panned window violates the invariant loudly', () {
-      // A window parked deep in history (set while the old stream had plenty
-      // of data) evaluated against a cleared hub: the assert fires. In
-      // release the assert is gone, so the stale range passes silently; the
-      // reset in live_tab.dart on HubCleared stayed the only guard.
+      // Without a generation change, evaluating a fixed window against a hub
+      // cleared behind its back is an invariant violation, not a silent clamp.
       final ctrl = GraphController(minLiveSpan: 20000);
       ctrl.applyWindow(100000, 100000, 300000, 0); // user panned into history
-      expect(() => ctrl.effectiveRange(0, 0), throwsA(isA<AssertionError>()));
-      expect(() => ctrl.effectiveRange(50, 0), throwsA(isA<AssertionError>()));
+      expect(() => ctrl.effectiveRange(0, 0), throwsA(isA<StateError>()));
+      expect(() => ctrl.effectiveRange(50, 0), throwsA(isA<StateError>()));
     });
 
     test('goLive restores a safe live-follow range', () {
       final ctrl = GraphController(minLiveSpan: 20000);
       ctrl.applyWindow(100000, 100000, 300000, 0);
 
-      // The live tab's reset passes the window it is leaving.
+      // Returning to live mode restores a safe range over an empty stream.
       ctrl.goLive(span: 100000, totalSamples: 0, oldestSample: 0);
 
       final (start, end) = ctrl.effectiveRange(0, 0);
       expect(ctrl.isLive, isTrue);
       expect(end, 0);
       expect(start, -20000);
+    });
+
+    test(
+      'a generation change drops a parked window without a side channel',
+      () {
+        final ctrl = GraphController(minLiveSpan: 100);
+        ctrl.applyWindow(100, 100, 1000, 0, generation: 7);
+        expect(ctrl.isLive, isFalse);
+        final (start, end) = ctrl.effectiveRange(0, 0, generation: 8);
+        expect(ctrl.isLive, isTrue);
+        expect((start, end), (-100, 0));
+      },
+    );
+
+    test('a generation change also restores the default live span', () {
+      final ctrl = GraphController(minLiveSpan: 100);
+      ctrl.zoom(2, 1.0, 1000, 0, generation: 7);
+      expect(ctrl.effectiveRange(1000, 0, generation: 7), (950, 1000));
+
+      final (start, end) = ctrl.effectiveRange(0, 0, generation: 8);
+      expect(ctrl.isLive, isTrue);
+      expect((start, end), (-100, 0));
+    });
+
+    test('goLive at 0 samples with minLiveSpan 0 does not lock span to 0', () {
+      final ctrl = GraphController();
+      ctrl.goLive(span: 0, totalSamples: 0, oldestSample: 0);
+      expect(ctrl.effectiveRange(0, 0), (0, 0));
+      expect(ctrl.effectiveRange(1000, 0), (0, 1000));
+    });
+  });
+
+  group('static source viewport', () {
+    test('is never live from construction, reset, or empty data', () {
+      final ctrl = GraphController(isLiveSource: false);
+      expect(ctrl.isLive, isFalse);
+      expect(ctrl.viewport, isA<GraphFull>());
+
+      ctrl.applyWindow(100, 200, 1000, 0);
+      ctrl.reset();
+      expect(ctrl.isLive, isFalse);
+      expect(ctrl.viewport, isA<GraphFull>());
+    });
+
+    test('initial zoom is centered and right-edge windows stay parked', () {
+      final ctrl = GraphController(isLiveSource: false);
+      ctrl.zoom(2, 0.5, 1000, 0);
+      expect(ctrl.isLive, isFalse);
+      expect(ctrl.effectiveRange(1000, 0), (250, 750));
+
+      ctrl.applyWindow(750, 250, 1000, 0);
+      expect(ctrl.isLive, isFalse);
+      expect(ctrl.effectiveRange(1000, 0), (750, 1000));
+      ctrl.zoom(2, 0.5, 1000, 0);
+      expect(ctrl.effectiveRange(1000, 0), (812, 937));
+    });
+
+    test('an empty source has an empty range and survives pan/zoom', () {
+      final ctrl = GraphController(isLiveSource: false);
+      expect(ctrl.effectiveRange(0, 0), (0, 0));
+      expect(ctrl.isLive, isFalse);
+
+      ctrl.pan(10, 0, 0);
+      ctrl.zoom(2, 0.5, 0, 0);
+      expect(ctrl.effectiveRange(0, 0), (0, 0));
+      expect(ctrl.isLive, isFalse);
+    });
+
+    test('pan and recenter clamp past the right edge without going live', () {
+      final ctrl = GraphController(isLiveSource: false);
+      ctrl.applyWindow(100, 200, 1000, 0);
+      ctrl.pan(2000, 1000, 0);
+      expect(ctrl.effectiveRange(1000, 0), (800, 1000));
+      ctrl.centerOn(2000, 1000, 0);
+      expect(ctrl.effectiveRange(1000, 0), (800, 1000));
+      expect(ctrl.isLive, isFalse);
+    });
+
+    test('zoom out from the right edge clamps to the available data', () {
+      final ctrl = GraphController(isLiveSource: false);
+      ctrl.applyWindow(750, 250, 1000, 0);
+      ctrl.zoom(0.5, 0.0, 1000, 0);
+      expect(ctrl.effectiveRange(1000, 0), (500, 1000));
+      expect(ctrl.isLive, isFalse);
     });
   });
 }

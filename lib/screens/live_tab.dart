@@ -17,7 +17,6 @@ import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
 import '../services/feed_health_tracker.dart';
 import '../models/feed_health.dart';
-import '../models/hub_event.dart';
 import '../widgets/feed_health_text.dart';
 import '../services/monitor_pause.dart';
 import '../services/recording_controller.dart';
@@ -58,31 +57,8 @@ class _LiveTabState extends State<LiveTab> {
   /// rebuild the tab.
   final ValueNotifier<bool> _showDerivative = ValueNotifier(false);
 
-  /// App-lifetime hub, captured for listener registration only.
-  DataHub? _hub;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // read (not watch): the hub notifies per packet, which must not rebuild
-    // this. App-lifetime singleton, so the identity check fires once.
-    final hub = context.read<DataHub>();
-    if (_hub != hub) {
-      _hub?.removeEventListener(_onHubEvent);
-      _hub = hub;
-      hub.addEventListener(_onHubEvent);
-    }
-  }
-
-  /// A hub reset means the previous trace is gone: reset the viewport so a
-  /// stale pan/zoom window can't be clamped against an empty buffer.
-  void _onHubEvent(HubEvent event) {
-    if (event is HubCleared) _graphCtrl.reset();
-  }
-
   @override
   void dispose() {
-    _hub?.removeEventListener(_onHubEvent);
     _showDerivative.dispose();
     _graphCtrl.dispose();
     super.dispose();
@@ -533,6 +509,7 @@ class LiveStats extends StatelessWidget {
           final (viewStart, viewEnd) = ctrl.effectiveRange(
             hub.totalSamples,
             hub.oldestSample,
+            generation: hub.dataGeneration,
           );
 
           return Column(

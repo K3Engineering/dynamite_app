@@ -2,70 +2,48 @@ import 'package:flutter/foundation.dart';
 
 import '../../models/bucket_series.dart';
 
-/// Per-surface memo of completed envelope block reductions (display units),
-/// keyed by absolute block index. Envelope blocks are anchored to absolute
-/// sample indices and samples never change once written, so a COMPLETE
-/// block's min/avg/max is immutable -- and the live-edge gap paths
-/// re-reduce ~200 blocks per surface EVERY frame (see SegmentedGraphCache;
-/// the measured round-8 split was reduce 46%/71% of sliver build on
-/// js/wasm). One instance per painting surface, owned by the host State
-/// like its SegmentedGraphCache.
+/// Per-surface memo of immutable envelope block reductions in display units.
 ///
-/// Invalidation mirrors the segment cache's identity model and is checked
-/// once per paint in [prepare]: a change of the data stream (generation),
-/// the display mapping (the cache's destructive key: unit, calibration,
-/// tares), or the block grid (blockSize) clears everything. Reductions are
-/// value-space (no y-mapping), so Y-range drift needs no invalidation.
+/// Each channel has a fixed direct-mapped table. A collision replaces the old
+/// entry, which only costs a later re-reduction; correctness never depends on
+/// retention. Identity changes clear all channels because reductions depend on
+/// the stream, display mapping and absolute block grid.
 class BlockReductionCache {
-  /// Per-channel memo cap. Entries cost ~40 bytes; a view holds ~1 block
-  /// per logical px, so the cap binds only during long pans (off-view
-  /// entries are dead weight), after which [prepare] evicts everything
-  /// outside one view width of margin.
-  static const int _maxEntriesPerChannel = 4096;
+  static const int _slotCount = 8192;
+  static const int _slotMask = _slotCount - 1;
 
-  /// channel -> blockIndex -> reduction.
-  final Map<int, Map<int, BlockReduction>> _byChannel = {};
+  final Map<int, _ChannelReductions> _byChannel = {};
 
   int _generation = -1;
   int _blockSize = -1;
-  List<Object?> _destructiveKey = const [];
+  List<Object?> _suppressKey = const [];
 
-  /// Frame upkeep, called once per paint with the SAME identity values the
-  /// SegmentedGraphCache gets: clears on identity change (see the class
-  /// doc) and keeps the memo bounded around the visible window. The block
-  /// range is [viewStart / blockSize, (viewStart + viewSpan) / blockSize)
-  /// at the caller's current mapping.
-  void prepare({
-    required int generation,
-    required List<Object?> destructiveKey,
-    required int blockSize,
-    required int viewBlockStart,
-    required int viewBlockEnd,
-  }) {
-    if (generation != _generation ||
-        blockSize != _blockSize ||
-        !listEquals(destructiveKey, _destructiveKey)) {
-      _byChannel.clear();
-      _generation = generation;
-      _blockSize = blockSize;
-      _destructiveKey = List.of(destructiveKey);
-    }
-    final margin = viewBlockEnd - viewBlockStart;
-    final keepFrom = viewBlockStart - margin;
-    final keepTo = viewBlockEnd + margin;
-    for (final blocks in _byChannel.values) {
-      if (blocks.length > _maxEntriesPerChannel) {
-        blocks.removeWhere((k, _) => k < keepFrom || k > keepTo);
-      }
-    }
+  void clear() {
+    _byChannel.clear();
+    _generation = -1;
+    _blockSize = -1;
+    _suppressKey = const [];
   }
 
-  /// The reduction for [blockIndex] of [channel]: [reduce] runs the first
-  /// time a [complete] block is asked for (per identity epoch, see
-  /// [prepare]); later asks are map hits. The caller reports a block
-  /// incomplete when its range is still filling at the data edge or its
-  /// left end is clipped by the retention edge -- such blocks are reduced
-  /// on every call and never cached, matching the uncached behavior.
+  /// Frame upkeep with the same identity values as [TileGraphCache].
+  void prepare({
+    required int generation,
+    required List<Object?> suppressKey,
+    required int blockSize,
+  }) {
+    if (generation == _generation &&
+        blockSize == _blockSize &&
+        listEquals(suppressKey, _suppressKey)) {
+      return;
+    }
+    _byChannel.clear();
+    _generation = generation;
+    _blockSize = blockSize;
+    _suppressKey = List.of(suppressKey);
+  }
+
+  /// Resolve one block. Incomplete edge blocks are never cached because their
+  /// reduction can change as data arrives or retention advances.
   BlockReduction resolve({
     required int channel,
     required int blockIndex,
@@ -73,8 +51,21 @@ class BlockReductionCache {
     required BlockReduction Function() reduce,
   }) {
     if (!complete) return reduce();
-    return _byChannel
-        .putIfAbsent(channel, () => {})
-        .putIfAbsent(blockIndex, reduce);
+    final blocks = _byChannel.putIfAbsent(channel, _ChannelReductions.new);
+    final slot = blockIndex & _slotMask;
+    if (blocks.tags[slot] != blockIndex) {
+      blocks.tags[slot] = blockIndex;
+      blocks.values[slot] = reduce();
+    }
+    return blocks.values[slot]!;
   }
+}
+
+class _ChannelReductions {
+  // Plain List<int>, not Int64List (unsupported on dart2js); exact to 2^53.
+  final List<int> tags = List<int>.filled(BlockReductionCache._slotCount, -1);
+  final List<BlockReduction?> values = List<BlockReduction?>.filled(
+    BlockReductionCache._slotCount,
+    null,
+  );
 }

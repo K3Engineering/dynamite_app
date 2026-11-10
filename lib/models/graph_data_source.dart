@@ -122,7 +122,7 @@ abstract interface class ChannelConversion {
   /// The channel's calibration bound to its current tare offset.
   ChannelConverter converterFor(int channelIndex);
 
-  /// Monotonic identity of the calibration set, mixed into segment-cache keys.
+  /// Monotonic identity of the calibration set, mixed into tile-cache keys.
   /// Static sources return a constant.
   int get calibrationVersion;
 
@@ -150,7 +150,7 @@ abstract interface class GraphDataSource
   double? projectedEndAt();
 
   /// Monotonic identity of the data stream; bumped on a reset for a NEW stream.
-  /// Renderers mix it into segment-cache keys so baked content from a previous
+  /// Renderers mix it into tile-cache keys so baked content from a previous
   /// stream is dropped (both restart at absolute sample 0). Static sources
   /// return a constant.
   int get dataGeneration;

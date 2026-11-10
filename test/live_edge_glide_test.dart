@@ -95,8 +95,12 @@ void main() {
       span: hub.totalSamples,
       totalSamples: hub.totalSamples,
       oldestSample: hub.oldestSample,
+      generation: hub.dataGeneration,
     );
-    expect(ctrl.lockedLiveSpan, isNull); // "everything"
+    expect(
+      ctrl.viewport,
+      isA<GraphLive>().having((v) => v.span, 'span', isNull),
+    );
     for (var e = 0; e < 10; e++) {
       linkEvent();
       await pumpFrames(2);
@@ -105,7 +109,13 @@ void main() {
 
     // Parked on a fixed window while the stream keeps flowing: the minimap
     // steps per packet, the box stays put.
-    ctrl.applyWindow(500, 400, hub.totalSamples, hub.oldestSample);
+    ctrl.applyWindow(
+      500,
+      400,
+      hub.totalSamples,
+      hub.oldestSample,
+      generation: hub.dataGeneration,
+    );
     expect(ctrl.isLive, isFalse);
     for (var e = 0; e < 6; e++) {
       linkEvent();
@@ -119,6 +129,7 @@ void main() {
       span: 400,
       totalSamples: hub.totalSamples,
       oldestSample: hub.oldestSample,
+      generation: hub.dataGeneration,
     );
     linkEvent();
     await pumpFrames(3);

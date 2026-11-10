@@ -6,8 +6,8 @@ import 'package:material_ui/material_ui.dart';
 
 import 'package:dynamite_app/widgets/graph_components.dart';
 
-// Simulation harness for the segmented graph cache: drives
-// [SegmentedGraphCache.paint] over seeded random window/config streams
+// Simulation harness for the tiled graph cache: drives
+// [TileGraphCache.paint] over seeded random window/config streams
 // against synthetic signals (extrema entering and leaving folds), checking
 // per frame:
 //   1. every bake's sample range sits inside the fold window and at/below
@@ -39,7 +39,7 @@ class _Sim {
 
   final int seed;
   final math.Random rng;
-  final cache = SegmentedGraphCache();
+  final cache = TileGraphCache();
   late final Map<int, double> spikes;
 
   static const double gw = 400;
@@ -52,7 +52,7 @@ class _Sim {
   double viewSpan = 400;
   int generation = 0;
   double gh = 100;
-  String remapKey = 'k';
+  String ghostKey = 'k';
   String destKey = 'u';
 
   final List<String> trace = [];
@@ -80,10 +80,16 @@ class _Sim {
   int get _covStart => viewStart.floor();
   int get _covEnd => (viewStart + viewSpan).ceil();
 
-  /// Window extremes, like the painters' fold; degenerate/empty -> 0..1.
+  (int, int) _renderSpan(int start, int end) {
+    final bs = blockSizeFor(viewSpan, gw);
+    return ((start / bs).floor() * bs, joinBlockEnd(end, bs));
+  }
+
+  /// Extremes over the full block-aligned render span, like the painters.
   (double, double) _fold() {
-    final from = math.max(0, _covStart);
-    final to = math.min(_covEnd, totalSamples);
+    final (renderStart, renderEnd) = _renderSpan(_covStart, _covEnd);
+    final from = math.max(0, renderStart);
+    final to = math.min(renderEnd, totalSamples);
     double lo = double.infinity, hi = double.negativeInfinity;
     for (int i = from; i < to; i++) {
       lo = math.min(lo, signal[i]);
@@ -139,7 +145,7 @@ class _Sim {
         trace.add('exit-right peak@$peak');
       }
       if (rng.nextDouble() < 0.7) {
-        remapKey = 'k${rng.nextInt(1000000)}';
+        ghostKey = 'k${rng.nextInt(1000000)}';
         trace.add('remap bump');
       }
     } else if (r < 0.68) {
@@ -150,7 +156,7 @@ class _Sim {
       gh = 100 + rng.nextInt(40).toDouble();
       trace.add('gh ${gh.round()}');
     } else if (r < 0.84) {
-      remapKey = 'k${rng.nextInt(1000000)}';
+      ghostKey = 'k${rng.nextInt(1000000)}';
       trace.add('remap bump');
     } else if (r < 0.88) {
       destKey = 'u${rng.nextInt(1000000)}';
@@ -184,8 +190,8 @@ class _Sim {
     final workRemains = cache.paint(frameCanvas, (
       config: (
         generation: generation,
-        destructiveKey: [destKey],
-        remapKey: [remapKey],
+        suppressKey: [destKey],
+        ghostKey: [ghostKey],
         gw: gw,
         gh: gh,
         dpr: 1.0,
@@ -194,17 +200,23 @@ class _Sim {
         yMin: foldLo,
         yMax: foldHi,
         totalSamples: totalSamples,
-        bakeableSamples: bakeable ?? totalSamples,
-        hPad: kSegmentImagePad,
-        vPad: kSegmentImagePad,
+        bakeHorizon: bakeable ?? totalSamples,
+        hPad: kTileImagePad,
+        vPad: kTileImagePad,
       ),
-      render: (Canvas canvas, int start, int end, int texW) {
+      render: (Canvas canvas, int start, int end) {
         final isGap = identical(canvas, frameCanvas);
+        final texW = ((end - start) * gw / viewSpan).ceil();
         calls.add((start: start, end: end, texW: texW, gap: isGap));
         if (!isGap) {
           // The value probe: extreme signal values this bake renders.
           double rLo = double.infinity, rHi = double.negativeInfinity;
-          for (int i = start; i < math.min(end, totalSamples); i++) {
+          final (renderStart, renderEnd) = _renderSpan(start, end);
+          for (
+            int i = math.max(0, renderStart);
+            i < math.min(renderEnd, totalSamples);
+            i++
+          ) {
             rLo = math.min(rLo, signal[i]);
             rHi = math.max(rHi, signal[i]);
           }
@@ -238,7 +250,6 @@ class _Sim {
                 'min $foldLo (a burned tile)',
           );
         }
-        return math.min((end - start) * gw / viewSpan, texW.toDouble());
       },
     ));
     recorder.endRecording().dispose();

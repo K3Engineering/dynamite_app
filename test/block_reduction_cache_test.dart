@@ -24,16 +24,12 @@ void main() {
     int generation = 1,
     List<Object?> key = const ['u', 7],
     int blockSize = 64,
-    int viewBlockStart = 0,
-    int viewBlockEnd = 8,
   }) {
     final cache = BlockReductionCache();
     cache.prepare(
       generation: generation,
-      destructiveKey: key,
+      suppressKey: key,
       blockSize: blockSize,
-      viewBlockStart: viewBlockStart,
-      viewBlockEnd: viewBlockEnd,
     );
     return cache;
   }
@@ -102,7 +98,7 @@ void main() {
     expect(reduces, 3);
   });
 
-  test('identity changes flush: generation, destructive key, block size', () {
+  test('identity changes flush: generation, suppress key, block size', () {
     final cache = prepared();
     cache.resolve(channel: 0, blockIndex: 5, complete: true, reduce: runs(r1));
     expect(reduces, 1);
@@ -113,10 +109,8 @@ void main() {
       int blockSize = 64,
     }) => cache.prepare(
       generation: generation,
-      destructiveKey: key,
+      suppressKey: key,
       blockSize: blockSize,
-      viewBlockStart: 0,
-      viewBlockEnd: 8,
     );
 
     prepareWith(); // identical identity: no flush
@@ -141,28 +135,21 @@ void main() {
     expect(reduces, 4, reason: 'block grid change flushes');
   });
 
-  test('over-cap prepare evicts far-from-view entries, keeps the margin', () {
+  test('direct-mapped collisions replace entries without an eviction pass', () {
     final cache = prepared();
-    // Push one channel past the 4096-entry cap.
-    for (int b = 0; b < 4200; b++) {
-      cache.resolve(
-        channel: 0,
-        blockIndex: b,
-        complete: true,
-        reduce: runs(r1),
-      );
-    }
-    final stored = reduces;
-
-    // Slide the view to [4000, 4010): keeps one view-width of margin, i.e.
-    // blocks [3990, 4020].
-    cache.prepare(
-      generation: 1,
-      destructiveKey: const ['u', 7],
-      blockSize: 64,
-      viewBlockStart: 4000,
-      viewBlockEnd: 4010,
+    cache.resolve(
+      channel: 0,
+      blockIndex: 100,
+      complete: true,
+      reduce: runs(r1),
     );
+    cache.resolve(
+      channel: 0,
+      blockIndex: 100 + 8192,
+      complete: true,
+      reduce: runs(r2),
+    );
+    expect(reduces, 2);
 
     cache.resolve(
       channel: 0,
@@ -170,13 +157,33 @@ void main() {
       complete: true,
       reduce: runs(r1),
     );
-    expect(reduces, stored + 1, reason: 'far-behind entry was evicted');
+    expect(reduces, 3, reason: 'the colliding entry was replaced');
     cache.resolve(
       channel: 0,
-      blockIndex: 4000,
+      blockIndex: 100 + 8192,
       complete: true,
-      reduce: runs(r1),
+      reduce: runs(r2),
     );
-    expect(reduces, stored + 1, reason: 'in-view entry survived eviction');
+    expect(reduces, 4, reason: 'replacement works in both directions');
+
+    // Unrelated identity upkeep does not scan or flush the table.
+    cache.resolve(
+      channel: 0,
+      blockIndex: 100 + 8192,
+      complete: true,
+      reduce: runs(r2),
+    );
+    expect(reduces, 4);
+
+    // Explicit clear flushes even if the next prepare passes identical keys.
+    cache.clear();
+    cache.prepare(generation: 1, suppressKey: const ['u', 7], blockSize: 64);
+    cache.resolve(
+      channel: 0,
+      blockIndex: 100 + 8192,
+      complete: true,
+      reduce: runs(r2),
+    );
+    expect(reduces, 5);
   });
 }

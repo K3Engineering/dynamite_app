@@ -18,12 +18,17 @@ import '../models/graph_data_source.dart';
 import '../models/load_cell.dart';
 import '../utils/nice_step.dart';
 import 'channel_palette.dart';
+import 'graph/axis_math.dart';
 import 'graph/block_reduction_cache.dart';
+import 'graph/envelope_renderer.dart';
 import 'graph/graph_controller.dart';
-import 'graph/segmented_cache.dart';
+import 'graph/tile_cache.dart';
+import 'graph/surface_cache.dart';
 
+export 'graph/axis_math.dart';
+export 'graph/envelope_renderer.dart';
 export 'graph/graph_controller.dart';
-export 'graph/segmented_cache.dart';
+export 'graph/tile_cache.dart';
 
 // ---------------------------------------------------------------------------
 // Shared graph layout constants
@@ -59,60 +64,14 @@ void _handleGraphPointerScroll(
   final focalFrac = ((event.localPosition.dx - _kGraphLeftSpace) / graphWidth)
       .clamp(0.0, 1.0);
   final zoomFactor = event.scrollDelta.dy < 0 ? 1.2 : 1 / 1.2;
-  ctrl.zoom(zoomFactor, focalFrac, totalSamples, data.oldestSample);
+  ctrl.zoom(
+    zoomFactor,
+    focalFrac,
+    totalSamples,
+    data.oldestSample,
+    generation: data.dataGeneration,
+  );
 }
-
-// ---------------------------------------------------------------------------
-// Shared Graph Data Source
-// ---------------------------------------------------------------------------
-
-/// Number of samples reduced into a single envelope/line "block".
-///
-/// One block becomes one min/avg/max reduction and one polyline vertex. When
-/// zoomed in past 1 sample/pixel this clamps to 1 (one block per sample). The
-/// last block in a range is allowed to be short.
-@visibleForTesting
-int blockSizeFor(double viewSamples, double graphW) {
-  assert(
-    graphW > 0,
-    'graphW must be positive, got $graphW',
-  ); // callers only paint into non-degenerate plot areas
-  // floor => >= 1 sample/block, so the polyline's vertex count tracks the
-  // pixel width. The remainder (viewSamples % blockSize) lands in the short
-  // final block.
-  final size = math.max(1, (viewSamples / graphW).floor());
-  if (size < 2 * kBucketSize) return size;
-  // Bucket-align big blocks: block indices are anchored at absolute sample 0,
-  // so a whole-multiple blockSize makes every COMPLETE block span whole
-  // buckets. Bucket reduction then equals the exact reduction, and a complete
-  // block's min/max no longer depends on how full the newest bucket was when
-  // it was first reduced (the immutable-reduction contract of
-  // [BlockReductionCache]). Rounding UP keeps the vertex bound.
-  return ((size + kBucketSize - 1) ~/ kBucketSize) * kBucketSize;
-}
-
-/// How far past a segment end its render reduces (in blocks) for the seam
-/// join -- and, being the same quantity, how far behind the data edge bakes
-/// stay so a baked join block is always complete (see [joinBlockEnd] and
-/// the bakeableSamples horizon in [_paintEnvelopeDataLayer]).
-const int _kJoinBlockSlackBlocks = 2;
-
-/// The sample index a segment render must reduce through for its seam join
-/// to match the neighbor segment: the polyline overshoots the segment end
-/// into the first block past it (the "join block"), and that block must be
-/// reduced over its FULL natural range so the join vertex equals the
-/// neighbor's vertex for the same block. A join block truncated at the
-/// segment end lands at a different (partial-data) average, which reads as a
-/// vertical step at the seam.
-///
-/// The result is block-aligned and lies in (end + blockSize, end +
-/// _kJoinBlockSlackBlocks * blockSize]; capping at totalSamples is the
-/// caller's job (the envelope layer keeps bakes that many block sizes
-/// behind the data edge, so a baked join block is always complete -- see
-/// [SegmentedGraphCache.paint]).
-@visibleForTesting
-int joinBlockEnd(int end, int blockSize) =>
-    (end ~/ blockSize + _kJoinBlockSlackBlocks) * blockSize;
 
 // ---------------------------------------------------------------------------
 // Unit-bound channels
@@ -215,9 +174,16 @@ class _Minimap extends StatefulWidget {
 }
 
 class _MinimapState extends State<_Minimap> {
-  final SegmentedGraphCache _cache = SegmentedGraphCache();
-  final BlockReductionCache _reductionCache = BlockReductionCache();
+  final GraphSurfaceCache _cache = GraphSurfaceCache();
   final BakePump _bakePump = BakePump();
+
+  @override
+  void didUpdateWidget(_Minimap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.dataSource != widget.dataSource) {
+      _cache.clear();
+    }
+  }
 
   @override
   void dispose() {
@@ -250,6 +216,7 @@ class _MinimapState extends State<_Minimap> {
       (mapStart + frac * mapSpan).round(),
       totalSamples,
       widget.dataSource.oldestSample,
+      generation: widget.dataSource.dataGeneration,
     );
   }
 
@@ -261,6 +228,7 @@ class _MinimapState extends State<_Minimap> {
       (d.delta.dx * mapSpan / graphWidth).round(),
       totalSamples,
       widget.dataSource.oldestSample,
+      generation: widget.dataSource.dataGeneration,
     );
   }
 
@@ -300,7 +268,6 @@ class _MinimapState extends State<_Minimap> {
                     colorScheme,
                     dpr,
                     _cache,
-                    _reductionCache,
                     _bakePump,
                   ),
                   size: Size.infinite,
@@ -325,13 +292,9 @@ class _MinimapPainter extends CustomPainter {
   final List<_ConvertedChannel> _channels;
   final ColorScheme _colorScheme;
   final double _dpr;
-  final SegmentedGraphCache _cache;
+  final GraphSurfaceCache _cache;
 
-  /// Completed-block reduction memo (see [BlockReductionCache]), owned by
-  /// the host [State] next to [_cache] (_dispose-free: pure Dart maps).
-  final BlockReductionCache _reductionCache;
-
-  /// Drives the rolling segment bakes: a repaint listenable for this painter
+  /// Drives the rolling tile bakes: a repaint listenable for this painter
   /// and the scheduler for extra frames when bake work remains (rolling
   /// bootstrap / staleness passes must complete even for static sources
   /// whose [GraphDataSource.repaint] never fires).
@@ -345,7 +308,6 @@ class _MinimapPainter extends CustomPainter {
     this._colorScheme,
     this._dpr,
     this._cache,
-    this._reductionCache,
     this._bakePump,
   ) : super(repaint: Listenable.merge([_data.repaint, _geo, _bakePump]));
 
@@ -374,12 +336,12 @@ class _MinimapPainter extends CustomPainter {
     // painter. The lifetime [GraphDataSource.channelExtremes] never shrink,
     // so after a ring wrap they would keep scaling Y by evicted samples the
     // minimap can no longer draw.
-    final ext = _foldNetExtremes(
-      _data,
-      _channels,
-      mapStart.floor(),
-      totalSamples,
+    final (foldStart, foldEnd) = foldBlockSpan(
+      mapStart,
+      mapStart + mapSpan,
+      blockSizeFor(mapSpan, gw),
     );
+    final ext = _foldNetExtremes(_data, _channels, foldStart, foldEnd);
     if (ext == null) return;
     // Zero is a display-space anchor, so include it even when the data does
     // not cross it.
@@ -402,10 +364,9 @@ class _MinimapPainter extends CustomPainter {
     final workRemains = _paintEnvelopeDataLayer(
       canvas,
       cache: _cache,
-      reductionCache: _reductionCache,
       data: _data,
       channels: _channels,
-      tares: [for (final bound in _channels) bound.tare],
+      includeTares: true,
       unit: _unit,
       gw: gw,
       gh: gh,
@@ -480,7 +441,11 @@ class _InteractiveGraphAreaState extends State<_InteractiveGraphArea> {
     final total = widget.data.totalSamples;
     if (total == 0) return;
 
-    final (s, e) = widget.ctrl.effectiveRange(total, widget.data.oldestSample);
+    final (s, e) = widget.ctrl.effectiveRange(
+      total,
+      widget.data.oldestSample,
+      generation: widget.data.dataGeneration,
+    );
     _session = (
       focalX: details.localFocalPoint.dx,
       startSample: s,
@@ -508,6 +473,7 @@ class _InteractiveGraphAreaState extends State<_InteractiveGraphArea> {
         anchorLiveEdge: session.wasLive,
         totalSamples: total,
         oldestSample: oldestSample,
+        generation: widget.data.dataGeneration,
       );
     } else {
       final dx = details.localFocalPoint.dx - session.focalX;
@@ -517,6 +483,7 @@ class _InteractiveGraphAreaState extends State<_InteractiveGraphArea> {
         session.span,
         total,
         oldestSample,
+        generation: widget.data.dataGeneration,
       );
     }
   }
@@ -562,12 +529,6 @@ class GraphWorkspace extends StatefulWidget {
   final List<int> activeChannels;
   final bool showDerivative;
 
-  /// Whether the source is the live feed (vs a loaded session); gates the
-  /// LIVE button and the semantics wording. Unrelated to
-  /// [GraphController.isLive] (viewport mode) and
-  /// [GraphController.lockedLiveSpan] (rolling animation).
-  final bool isLiveSource;
-
   const new({
     super.key,
     required this.data,
@@ -575,7 +536,6 @@ class GraphWorkspace extends StatefulWidget {
     required this.unit,
     required this.activeChannels,
     this.showDerivative = false,
-    this.isLiveSource = true,
   });
 
   @override
@@ -584,10 +544,8 @@ class GraphWorkspace extends StatefulWidget {
 
 class _GraphWorkspaceState extends State<GraphWorkspace>
     with SingleTickerProviderStateMixin {
-  final SegmentedGraphCache _forceCache = SegmentedGraphCache();
-  final BlockReductionCache _forceReductionCache = BlockReductionCache();
-  final SegmentedGraphCache _derivCache = SegmentedGraphCache();
-  final BlockReductionCache _derivReductionCache = BlockReductionCache();
+  final GraphSurfaceCache _forceCache = GraphSurfaceCache();
+  final GraphSurfaceCache _derivCache = GraphSurfaceCache();
   final BakePump _bakePump = BakePump();
 
   /// One label cache per painter: [AxisLabelCache] treats a paint as a pass,
@@ -626,6 +584,14 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
       oldWidget.data.repaint.removeListener(_onGeometrySourceChanged);
       widget.ctrl.addListener(_onGeometrySourceChanged);
       widget.data.repaint.addListener(_onGeometrySourceChanged);
+      // Static sources all use generation 0, so identity is the reset signal.
+      if (oldWidget.data != widget.data) {
+        _forceCache.clear();
+        _derivCache.clear();
+        if (oldWidget.ctrl == widget.ctrl) {
+          widget.ctrl.reset();
+        }
+      }
       _onGeometrySourceChanged();
     }
   }
@@ -694,7 +660,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
       container: true,
       explicitChildNodes: true,
       label: _graphSemanticsLabel(
-        live: widget.isLiveSource,
+        live: widget.ctrl.isLiveSource,
         channels: [for (final bound in convertedChannels) bound.channel],
         unit: unit,
         hasDerivative: widget.showDerivative,
@@ -715,7 +681,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                     showXLabels: !widget.showDerivative,
                     geometry: _geometry,
                     cache: _forceCache,
-                    reductionCache: _forceReductionCache,
                     colorScheme: colorScheme,
                     dpr: dpr,
                     labels: _forceLabels,
@@ -735,7 +700,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                       channels: convertedChannels,
                       geometry: _geometry,
                       cache: _derivCache,
-                      reductionCache: _derivReductionCache,
                       colorScheme: colorScheme,
                       dpr: dpr,
                       labels: _derivLabels,
@@ -752,7 +716,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
               ),
             ],
           ),
-          if (widget.isLiveSource)
+          if (widget.ctrl.isLiveSource)
             _LiveButton(data: widget.data, ctrl: widget.ctrl),
         ],
       ),
@@ -789,15 +753,19 @@ class _LiveButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: ctrl,
+      listenable: Listenable.merge([ctrl, data.repaint]),
       builder: (context, _) {
-        if (ctrl.isLive || data.totalSamples == 0) {
+        if (data.totalSamples == 0) {
           return const SizedBox.shrink();
         }
         final (start, end) = ctrl.effectiveRange(
           data.totalSamples,
           data.oldestSample,
+          generation: data.dataGeneration,
         );
+        if (ctrl.isLive) {
+          return const SizedBox.shrink();
+        }
         return Positioned(
           right: 64,
           top: 8,
@@ -806,6 +774,7 @@ class _LiveButton extends StatelessWidget {
               span: end - start,
               totalSamples: data.totalSamples,
               oldestSample: data.oldestSample,
+              generation: data.dataGeneration,
             ),
             icon: const Icon(Icons.fast_forward, size: 16),
             label: const Text('LIVE'),
@@ -821,7 +790,7 @@ class _LiveButton extends StatelessWidget {
   }
 }
 
-/// Zoom controls: a split button group [− | span | +]. The middle segment
+/// Zoom controls: a split button group [− | span | +]. The middle tile
 /// opens a menu of preset window spans, "All" (the whole retained buffer,
 /// auto-expanding on live), and a "Custom…" exact-span dialog. A preset is
 /// shown only when the source could EVER hold it (the live ring never spans
@@ -835,7 +804,7 @@ class GraphZoomControls extends StatelessWidget {
   final GraphDataSource data;
   final GraphController ctrl;
 
-  /// Preset window spans for the middle segment's menu: (seconds, label),
+  /// Preset window spans for the middle tile's menu: (seconds, label),
   /// decade steps. "All" and "Custom…" follow in the menu.
   static const _presets = [
     (1, '1 s'),
@@ -846,7 +815,7 @@ class GraphZoomControls extends StatelessWidget {
   ];
 
   // Split-group shapes, twin of the TARE group in `ActionButtons`: rounded
-  // outer corners, small inner corners, segments separated by a 4px gap.
+  // outer corners, small inner corners, tiles separated by a 4px gap.
   static const _splitLeft = RoundedRectangleBorder(
     borderRadius: BorderRadius.horizontal(
       left: Radius.circular(20),
@@ -867,12 +836,12 @@ class GraphZoomControls extends StatelessWidget {
   /// following it and at the window center otherwise.
   void _zoomBy(double factor) {
     if (data.totalSamples <= 0) return;
-    ctrl.zoom(
-      factor,
-      ctrl.isLive ? 1.0 : 0.5,
+    final (s, e) = ctrl.effectiveRange(
       data.totalSamples,
       data.oldestSample,
+      generation: data.dataGeneration,
     );
+    _zoomToSpan(((e - s) / factor).round(), s, e);
   }
 
   /// Set an exact window span in samples. [GraphController.zoomTo] clamps;
@@ -881,15 +850,24 @@ class GraphZoomControls extends StatelessWidget {
   /// [_zoomBy].
   void _applySpan(int spanSamples) {
     if (data.totalSamples <= 0) return;
-    final (s, e) = ctrl.effectiveRange(data.totalSamples, data.oldestSample);
+    final (s, e) = ctrl.effectiveRange(
+      data.totalSamples,
+      data.oldestSample,
+      generation: data.dataGeneration,
+    );
+    _zoomToSpan(spanSamples, s, e);
+  }
+
+  void _zoomToSpan(int spanSamples, int baseStart, int baseEnd) {
     ctrl.zoomTo(
       spanSamples,
       ctrl.isLive ? 1.0 : 0.5,
-      baseStart: s,
-      baseSpan: e - s,
+      baseStart: baseStart,
+      baseSpan: baseEnd - baseStart,
       anchorLiveEdge: ctrl.isLive,
       totalSamples: data.totalSamples,
       oldestSample: data.oldestSample,
+      generation: data.dataGeneration,
     );
   }
 
@@ -900,6 +878,7 @@ class GraphZoomControls extends StatelessWidget {
     final (start, end) = ctrl.effectiveRange(
       data.totalSamples,
       data.oldestSample,
+      generation: data.dataGeneration,
     );
     final seconds = await showDialog<double>(
       context: context,
@@ -910,7 +889,7 @@ class GraphZoomControls extends StatelessWidget {
     _applySpan((seconds * data.sampleRate).round());
   }
 
-  /// A zoom segment; [label] is the hover tooltip and the button's
+  /// A zoom tile; [label] is the hover tooltip and the button's
   /// accessible name.
   ///
   /// The name goes on the icon, not the [Tooltip], because a tooltip lands in
@@ -1124,6 +1103,7 @@ class _SpanReadout extends StatelessWidget {
         final (start, end) = ctrl.effectiveRange(
           data.totalSamples,
           data.oldestSample,
+          generation: data.dataGeneration,
         );
         return Container(
           // Wide enough for hours-folded spans ("1:00:00") in bold tabular
@@ -1175,44 +1155,6 @@ String formatWindowSpan(double spanSec) {
     return '${oneDecimal.endsWith('.0') ? oneDecimal.substring(0, oneDecimal.length - 2) : oneDecimal} s';
   }
   return formatAxisTick(spanSec, 0);
-}
-
-/// Clock-nice step ladder, as rungs of seconds/minutes/hours, used by
-/// [timeStepCeil]. 30 s and friends keep m:ss labels meaningful; a 1/2/5
-/// decade of "100 s" would print 1:40.
-const _kClockRungs = [1, 2, 5, 10, 20, 30, 60];
-
-/// Smallest clock-nice step >= [target] seconds: 1/2/5 decades below one
-/// second ([niceStepCeil]), then [_kClockRungs] of seconds, minutes, hours, ...
-@visibleForTesting
-double timeStepCeil(double target) {
-  if (target < 1) return niceStepCeil(target);
-  for (double scale = 1; ; scale *= 60) {
-    // Terminates once scale >= target, via r = 1.
-    for (final r in _kClockRungs) {
-      final step = scale * r;
-      if (step >= target) return step;
-    }
-  }
-}
-
-/// Format an X-axis tick time (absolute seconds since session start) with
-/// [decimals] fractional digits: "42", "0.35", "12:05", "1:00.5". Hours fold
-/// per tick: at and past one hour the format grows a field ("1:02:30")
-/// instead of minutes running past 59, so the rollover is visible in the
-/// axis and a tick's label never depends on the window around it.
-@visibleForTesting
-String formatAxisTick(double sec, int decimals) {
-  if (sec < 0) return '-${formatAxisTick(-sec, decimals)}';
-  // Snap fp noise (ticks are k * step products) so 59.999... prints as 1:00.
-  final f = math.pow(10, decimals);
-  final snapped = (sec * f).round() / f;
-  final int m = snapped ~/ 60;
-  final s = (snapped - m * 60).toStringAsFixed(decimals);
-  if (m == 0) return s;
-  final ss = s.padLeft(decimals == 0 ? 2 : decimals + 3, '0');
-  if (m < 60) return '$m:$ss';
-  return '${m ~/ 60}:${(m % 60).toString().padLeft(2, '0')}:$ss';
 }
 
 // ---------------------------------------------------------------------------
@@ -1301,64 +1243,14 @@ class AxisLabelCache {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Nice Y-axis ranges. Ticks and the snapped range stay in base display units
-// so the data pipeline and segment cache never see a rescale; only the labels
-// render through the unit's SI-prefix rung.
-// ---------------------------------------------------------------------------
-
 /// Minimum spacing between axis ticks (logical px): [Size]-based density
 /// instead of a fixed tick count, so wide/tall plots get more labels than a
 /// phone without crowding either.
 const double _kMinXTickPx = 48;
-const double _kMinYTickPx = 32;
 
 /// Breathing room demanded between neighboring X labels, on top of each
 /// label's measured width (see [_fitTimeLines]).
 const double _kLabelGapPx = 8;
-
-typedef YAxisRange = ({
-  double yMin,
-  double yMax,
-  double tickDelta,
-
-  /// SI-prefix rung the tick labels are rendered in (ticks / factor + symbol).
-  AxisRung rung,
-
-  /// Label decimals: exactly enough to resolve the tick step in rung units.
-  int decimals,
-});
-
-YAxisRange _computeYRange(
-  double dataMin,
-  double dataMax,
-  DisplayUnit unit,
-  double plotHeight,
-) {
-  // Flat data (or the 0,0 no-data derivative fold) has dataMax == dataMin:
-  // widen it to a unit window. Anything non-finite is a broken conversion
-  // upstream, so let it fail in the tick math rather than drawing a plausible
-  // axis for corrupt state.
-  final double lo = dataMin;
-  final double max = dataMax <= lo ? lo + 1.0 : dataMax;
-
-  // 1/2/5 tick delta sized so ticks land at least [_kMinYTickPx] apart.
-  final tickDelta = niceStepCeil((max - lo) * _kMinYTickPx / plotHeight);
-
-  // Snap yMin and yMax to tick boundaries
-  final yMin = (lo / tickDelta).floor() * tickDelta;
-  final yMax = (max / tickDelta).ceil() * tickDelta;
-
-  final rung = unit.axisRung(math.max(yMin.abs(), yMax.abs()));
-  final decimals = DisplayUnit.axisDecimalsFor(tickDelta / rung.factor);
-  return (
-    yMin: yMin,
-    yMax: yMax,
-    tickDelta: tickDelta,
-    rung: rung,
-    decimals: decimals,
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Shared plot toolkit
@@ -1368,29 +1260,6 @@ YAxisRange _computeYRange(
 /// placement (X: vertical lines, labels centered below the plot; Y:
 /// horizontal lines, labels centered vertically past the right edge).
 enum _AxisOrientation { x, y }
-
-/// Major cadence for tick [step]: the smallest [stepCeil] ladder rung at
-/// least 5x step, expressed as a count of steps. The count lands at 5-10:
-/// on the clock ladder the 5x rung keeps majors clock-aligned (whole 2-min
-/// marks from a 20 s step, hour marks from a 10-min step), where bolding a
-/// plain "every 5th tick" would land on round multiples of step like 100 s
-/// or 25 min, which read as noise next to m:ss labels. The rung can never
-/// collapse to step itself, so a tight zoom simply shows few or no majors
-/// -- no minimum-count gate needed.
-///
-/// Majors are the ticks with k % period == 0 on the absolute tick grid
-/// k * step, so the tick k == 0 (X: session start; Y: zero) is a major
-/// whenever it is visible.
-@visibleForTesting
-int majorPeriod(double step, double Function(double target) stepCeil) {
-  final superStep = stepCeil(5 * step);
-  final period = (superStep / step).round();
-  assert(
-    (superStep - period * step).abs() < step * 1e-6,
-    'superStep $superStep is not a multiple of step $step',
-  );
-  return period;
-}
 
 /// Fractional digits for [formatAxisTick] at [step]: enough to resolve the step,
 /// capped at 3 (ms).
@@ -1417,67 +1286,6 @@ class _AxisLines {
   final List<_AxisTick> ticks;
   final Iterable<double> minorPos;
   final bool clipLabels;
-}
-
-/// One labeled tick of an axis grid before any label paragraph exists: grid
-/// value, major flag, pixel position. The pure half of [_enumAxisLines].
-typedef AxisTick = ({double value, double pos, bool major});
-
-/// The pure tick grid at [step] over [windowStart]..[windowEnd] widened by
-/// [enumSlack], lazily ([_fitTimeLines] re-enumerates at candidate steps).
-/// Nothing here prepares a label, so tests can pin it without a cache.
-///
-/// Labeled ticks live on the absolute grid k * step, so they (and the majors)
-/// hold still while the window slides; indexing by k rather than accumulating
-/// keeps the major test exact and makes the k == 0 tick literally 0.0.
-///
-/// [enumSlack] extends the population past both window edges; X passes one
-/// tick plus the live edge's worst lead jitter ([_kLiveEdgeLeadMs]), so a
-/// rolling window micro-oscillating across an edge tick slides it in and out
-/// instead of toggling it per frame. Y snaps its range to tick boundaries and
-/// passes 0. The inclusive end (step * 0.01) leaves room for fp noise, so a
-/// line exactly on the snapped or slacked edge draws.
-Iterable<AxisTick> axisTicks(
-  double windowStart,
-  double windowEnd, {
-  required double step,
-  required double Function(double target) stepCeil,
-  required double enumSlack,
-  required double Function(double value) posOf,
-}) sync* {
-  final period = majorPeriod(step, stepCeil);
-  final lo = windowStart - enumSlack;
-  final hi = windowEnd + enumSlack + step * 0.01;
-  // The 1e-9 nudge keeps a tick exactly at the window edge from dropping out
-  // to fp error: yMin is itself snapped to a tick boundary (see
-  // [_computeYRange]), and (yMin / step).ceil() can land one step high.
-  for (int k = (lo / step - 1e-9).ceil(); k * step <= hi; k++) {
-    yield (value: k * step, pos: posOf(k * step), major: k % period == 0);
-  }
-}
-
-/// The pixel positions of the half-step minor lines over [axisTicks]' window,
-/// lazily (see [axisTicks]). Minor lines live on the ODD half-step grid,
-/// indexed by j so the overlap test is exact: even multiples of minorStep are
-/// the labeled ticks, so starting at the first odd j and stepping by 2 skips
-/// them.
-Iterable<double> axisMinorTicks(
-  double windowStart,
-  double windowEnd, {
-  required double step,
-  required double enumSlack,
-  required double Function(double value) posOf,
-}) sync* {
-  final minorStep = step / 2;
-  final hi = windowEnd + enumSlack + step * 0.01;
-  final firstMinor = ((windowStart - enumSlack) / minorStep - 1e-9).ceil();
-  for (
-    int j = firstMinor.isEven ? firstMinor + 1 : firstMinor;
-    j * minorStep <= hi;
-    j += 2
-  ) {
-    yield posOf(j * minorStep);
-  }
 }
 
 /// [_AxisLines] for one axis at [step]: the pure grid above with a label
@@ -1733,213 +1541,6 @@ void _drawMissingDataHatching(
   }
 }
 
-/// Accumulates 2D vertices into a fixed [Float32List] and flushes them in
-/// bounded chunks, staying within the web (Skwasm/Emscripten) stack-allocation
-/// limit of 4096 floats per draw call.
-///
-/// On flush, the trailing [preserveFloats] floats are carried over to the front
-/// of the buffer so a continuous primitive (triangle strip or polyline) is not
-/// broken across flushes. [drawThreshold] is the minimum filled-float count
-/// required before a flush actually emits anything.
-@visibleForTesting
-class VertexBatcher {
-  new({
-    required this.preserveFloats,
-    required this.drawThreshold,
-    required this.onFlush,
-    int capacity = 4096,
-  }) : _buf = Float32List(capacity);
-
-  final Float32List _buf;
-  final int preserveFloats;
-  final int drawThreshold;
-
-  /// Draws the populated `[0, length)` view of the backing buffer.
-  final void Function(Float32List view) onFlush;
-
-  int _len = 0;
-
-  int get _capacity => _buf.length;
-
-  void add(double x, double y) {
-    _buf[_len++] = x;
-    _buf[_len++] = y;
-  }
-
-  bool wouldOverflow(int extraFloats) => _len + extraFloats > _capacity;
-
-  /// Emit the accumulated vertices (if past [drawThreshold]) and reset, keeping
-  /// the trailing [preserveFloats] floats so the primitive stays continuous.
-  void flush() {
-    if (_len > drawThreshold) {
-      onFlush(Float32List.sublistView(_buf, 0, _len));
-      for (int i = 0; i < preserveFloats; i++) {
-        _buf[i] = _buf[_len - preserveFloats + i];
-      }
-      _len = preserveFloats;
-    }
-  }
-
-  /// Drop the preserved tail after a [flush]: the primitive ends here, so the
-  /// next [add] starts a fresh polyline instead of bridging the gap. The
-  /// break idiom is `flush(); reset();` — [reset] alone would silently drop
-  /// un-emitted vertices.
-  void reset() {
-    _len = 0;
-  }
-}
-
-/// The (average polyline, min/max envelope fill) [VertexBatcher] pair shared
-/// by the envelope renderers. Both batchers reuse one [Paint], restyled per
-/// flush.
-({VertexBatcher avg, VertexBatcher env}) _envelopeBatchers(
-  Canvas canvas, {
-  required Color avgColor,
-  required double avgStrokeWidth,
-  required Color envColor,
-}) {
-  final pen = Paint();
-
-  final avg = VertexBatcher(
-    preserveFloats: 2,
-    drawThreshold: 2,
-    onFlush: (view) {
-      pen
-        ..color = avgColor
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = avgStrokeWidth;
-      canvas.drawRawPoints(ui.PointMode.polygon, view, pen);
-    },
-  );
-
-  final env = VertexBatcher(
-    preserveFloats: 4,
-    drawThreshold: 4,
-    onFlush: (view) {
-      final vertices = ui.Vertices.raw(ui.VertexMode.triangleStrip, view);
-      pen
-        ..color = envColor
-        ..style = PaintingStyle.fill;
-      canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
-      vertices.dispose();
-    },
-  );
-
-  return (avg: avg, env: env);
-}
-
-/// Render one channel as a min/avg/max envelope across [graphW] pixel columns:
-/// each block's samples are reduced to min/avg/max and projected with
-/// [valueToY]; the envelope is filled at low alpha, the average stroked on top.
-///
-/// Blocks are anchored to absolute sample indices, so the geometry lands on the
-/// same pixels regardless of scroll and the segment cache can bake it once. A
-/// bucketed [series] switches to [reduceBlockBuckets] when a block spans >= 2
-/// buckets (see its doc for the accuracy and ring-wrap details).
-///
-/// Gap ink is clipped by [_paintEnvelopeDataLayer]; the exact and bucket paths
-/// differ only at gap edges. Vertices flush in <=4096-float chunks to stay
-/// within the web stack-allocation limit.
-void _drawChannelEnvelope(
-  Canvas canvas, {
-  required Color color,
-  required double graphW,
-  required int viewStart,
-  required double viewSamples,
-  required int blockSize,
-  required int renderEnd,
-  required int firstUsableSample,
-  required int channelIndex,
-  required BlockReductionCache reductionCache,
-  required EnvelopeSeries series,
-  required double Function(double value) valueToY,
-  required int clipEnvelopeSamples,
-  double avgStrokeWidth = 1.5,
-  int avgAlpha = 255,
-  int envAlpha = 60,
-}) {
-  final (:avg, :env) = _envelopeBatchers(
-    canvas,
-    avgColor: color.withAlpha(avgAlpha),
-    avgStrokeWidth: avgStrokeWidth,
-    envColor: color.withAlpha(envAlpha),
-  );
-
-  // Buckets pay off (and stay accurate) once a block spans >= 2 buckets.
-  final buckets = series.buckets;
-  final bool useBuckets = blockSize >= 2 * buckets.bucketSize;
-
-  // Anchored to absolute sample 0, not viewStart, so caching stays
-  // scroll-invariant.
-  final int startBlock = (math.max(viewStart, firstUsableSample) / blockSize)
-      .floor();
-  final int endBlock = (renderEnd / blockSize).ceil();
-
-  for (int k = startBlock; k < endBlock; k++) {
-    final int sStart = k * blockSize;
-    final int sEnd = math.min(
-      sStart + blockSize,
-      renderEnd,
-    ); // last block may be short
-
-    final int drawStart = math.max(sStart, firstUsableSample);
-    if (drawStart >= sEnd) continue;
-    // Short only at the trailing block or a firstUsableSample clip.
-    assert(
-      sEnd - drawStart >= 1 && sEnd - drawStart <= blockSize,
-      'block [$drawStart, $sEnd) has bad size for blockSize $blockSize',
-    );
-
-    // A block is immutable -- reducible once, cacheable forever -- only
-    // when it is complete (fully written at the data edge) and unclipped
-    // by the retention edge (a [drawStart] clip is re-derived every frame
-    // as the edge advances). See [BlockReductionCache].
-    final bool complete = drawStart == sStart && sEnd - sStart == blockSize;
-    final BlockReduction r = reductionCache.resolve(
-      channel: channelIndex,
-      blockIndex: k,
-      complete: complete,
-      reduce: () => useBuckets
-          ? reduceBlockBuckets(series, drawStart, sEnd)
-          : reduceBlockExact(series.sampleAt, drawStart, sEnd),
-    );
-
-    if (r.count == 0) {
-      // Break the polyline at a fully-dropped block: flush, then reset so the
-      // next valid block starts a fresh primitive instead of bridging the gap.
-      env.flush();
-      env.reset();
-      avg.flush();
-      avg.reset();
-      continue;
-    }
-
-    final avgY = valueToY(r.sum / r.count);
-    final minY = valueToY(r.min);
-    final maxY = valueToY(r.max);
-
-    // Segment-local x: a baked segment passes its own start as viewStart.
-    final double xPos = (sStart - viewStart) * graphW / viewSamples;
-    final double nextXPos = (sEnd - viewStart) * graphW / viewSamples;
-
-    avg.add(xPos, avgY);
-
-    if (sStart < clipEnvelopeSamples) {
-      env.add(xPos, maxY);
-      env.add(xPos, minY);
-      env.add(nextXPos, maxY);
-      env.add(nextXPos, minY);
-
-      if (env.wouldOverflow(8)) env.flush();
-    }
-
-    if (avg.wouldOverflow(2)) avg.flush();
-  }
-
-  env.flush();
-  avg.flush();
-}
-
 /// The tared-force rendering recipe for one channel: the exact per-sample
 /// evaluator (gap samples NaN, breaking the polyline — see
 /// [SampleStorageQueries.rawValueAt]) plus its bucket acceleration. The
@@ -1984,17 +1585,17 @@ EnvelopeSeries _taredEnvelopeSeries(
   return lo == null ? null : (lo, hi!);
 }
 
-/// Paint the segment-cached envelope data layer for the window
+/// Paint the tile-cached envelope data layer for the window
 /// [viewStart, viewStart + viewSpan) mapped to x in [0, gw): the pipeline
 /// shared by the force graph, derivative graph, and minimap.
 ///
 /// [seriesFor] returns the per-channel rendering recipe. Cache keying: the
-/// display [unit], calibration version, and [tares] are destructive (never
-/// blitted once stale); the channel list is the remap key (stale segments keep
-/// blitting as ghosts while swept); a data-generation change clears the cache.
-/// See the staleness model on [SegmentedGraphCache]. [reductionCache] memos
+/// display [unit], calibration version, and optional tare version are
+/// suppressing (never blitted once stale); the channel list is the ghost key
+/// (stale tiles keep blitting while swept); generation changes clear the cache.
+/// See the staleness model on [TileGraphCache]. [reductionCache] memos
 /// completed-block reductions under the same identity (generation +
-/// destructive key + block grid; see [BlockReductionCache]), so the
+/// suppress key + block grid; see [BlockReductionCache]), so the
 /// live-edge gap draws and (re)bakes reduce each block once instead of
 /// every frame.
 ///
@@ -2003,11 +1604,10 @@ EnvelopeSeries _taredEnvelopeSeries(
 @useResult
 bool _paintEnvelopeDataLayer(
   Canvas canvas, {
-  required SegmentedGraphCache cache,
-  required BlockReductionCache reductionCache,
+  required GraphSurfaceCache cache,
   required GraphDataSource data,
   required List<_ConvertedChannel> channels,
-  required List<double?> tares,
+  required bool includeTares,
   required DisplayUnit unit,
   required double gw,
   required double gh,
@@ -2031,8 +1631,8 @@ bool _paintEnvelopeDataLayer(
 
   // The bake render clamps content to firstUsableSample (the ring can't
   // serve evicted samples), but that clamp is deliberately NOT in the
-  // segment keys: keying on it would churn every packet after a ring wrap
-  // and force full rebakes of unchanged segments. Instead clip the whole
+  // tile keys: keying on it would churn every packet after a ring wrap
+  // and force full rebakes of unchanged tiles. Instead clip the whole
   // draw (bakes and blits alike) at the retention edge so a stale blit
   // can't show evicted-sample ink a fresh draw would omit. A no-op
   // whenever the window starts at or inside usable data.
@@ -2043,21 +1643,24 @@ bool _paintEnvelopeDataLayer(
       Rect.fromLTWH(usableX, -_kUnbounded, 2 * _kUnbounded, 2 * _kUnbounded),
     );
   }
-  // Share the destructive-key list with the reduction cache's upkeep (the
+  // Share the suppress-key list with the reduction cache's upkeep (the
   // identity model matches one-to-one, so both flip on the same change).
-  final destructiveKey = <Object?>[unit, data.calibrationVersion, ...tares];
+  final suppressKey = <Object?>[
+    unit,
+    data.calibrationVersion,
+    includeTares ? data.tareVersion : 0,
+  ];
+  final reductionCache = cache.reductions;
   reductionCache.prepare(
     generation: data.dataGeneration,
-    destructiveKey: destructiveKey,
+    suppressKey: suppressKey,
     blockSize: blockSize,
-    viewBlockStart: (viewStart / blockSize).floor(),
-    viewBlockEnd: ((viewStart + viewSpan) / blockSize).ceil(),
   );
-  final workRemains = cache.paint(canvas, (
+  final workRemains = cache.tiles.paint(canvas, (
     config: (
       generation: data.dataGeneration,
-      destructiveKey: destructiveKey,
-      remapKey: [for (final bound in channels) bound.channel],
+      suppressKey: suppressKey,
+      ghostKey: [for (final bound in channels) bound.channel],
       gw: gw,
       gh: gh,
       dpr: dpr,
@@ -2068,23 +1671,20 @@ bool _paintEnvelopeDataLayer(
       totalSamples: totalSamples,
       // Bakes stop the join slack behind the data edge so their join block is
       // complete (see [joinBlockEnd]).
-      bakeableSamples: math.max(
-        0,
-        totalSamples - _kJoinBlockSlackBlocks * blockSize,
-      ),
+      bakeHorizon: math.max(0, totalSamples - joinBlockSlackBlocks * blockSize),
       // One block of overshoot can be many px when zoomed past 1 sample/px.
-      hPad: math.max(kSegmentImagePad, blockPx + 2),
-      vPad: kSegmentImagePad,
+      hPad: math.max(kTileImagePad, blockPx + 2),
+      vPad: kTileImagePad,
     ),
-    render: (cCanvas, start, end, texW) {
-      // The polyline overshoots the segment end into its join block so the
+    render: (cCanvas, start, end) {
+      // The polyline overshoots the tile end into its join block so the
       // line reaches the seam with the neighbor's slope; that block is
       // reduced over its FULL range so the join vertex matches the
       // neighbor's.
       final int limit = math.min(joinBlockEnd(end, blockSize), totalSamples);
 
       // Clip data ink out of gap x-ranges (the hatching drawn by the chrome
-      // is the only marker there). A baked segment's gap set is frozen even
+      // is the only marker there). A baked tile's gap set is frozen even
       // though gaps are NOT append-only: new gaps land at the live edge,
       // past the 2-block bake horizon, and pruneBefore drops gaps only left
       // of the retention edge, which the draw-time clip above hides.
@@ -2094,7 +1694,7 @@ bool _paintEnvelopeDataLayer(
         cCanvas.clipPath(clip);
       }
       for (final bound in channels) {
-        _drawChannelEnvelope(
+        drawChannelEnvelope(
           cCanvas,
           color: getChannelColor(bound.channel),
           graphW: gw,
@@ -2114,7 +1714,6 @@ bool _paintEnvelopeDataLayer(
         );
       }
       if (clip != null) cCanvas.restore();
-      return (end - start) * gw / viewSpan;
     },
   ));
   if (usableX > 0) canvas.restore();
@@ -2250,18 +1849,22 @@ _GraphGeometry _computeGeometry(GraphDataSource data, GraphController ctrl) {
     );
   }
 
-  final (viewStart, viewEnd) = ctrl.effectiveRange(totalInt, oldestInt);
+  final (viewStart, viewEnd) = ctrl.effectiveRange(
+    totalInt,
+    oldestInt,
+    generation: data.dataGeneration,
+  );
   final double vStart, vEnd;
-  final int? rollingSpan = ctrl.lockedLiveSpan;
-  if (rollingSpan != null) {
-    vEnd = liveEdge(rollingSpan.toDouble());
-    vStart = vEnd - rollingSpan;
-  } else if (ctrl.isLive) {
-    vStart = viewStart.toDouble();
-    vEnd = liveEdge((viewEnd - viewStart).toDouble());
-  } else {
-    vStart = viewStart.toDouble();
-    vEnd = viewEnd.toDouble();
+  switch (ctrl.viewport) {
+    case GraphLive(:final span?):
+      vEnd = liveEdge(span.toDouble());
+      vStart = vEnd - span;
+    case GraphLive():
+      vStart = viewStart.toDouble();
+      vEnd = liveEdge((viewEnd - viewStart).toDouble());
+    case GraphWindow() || GraphFull():
+      vStart = viewStart.toDouble();
+      vEnd = viewEnd.toDouble();
   }
 
   final double mapEnd = liveEdge(
@@ -2340,7 +1943,7 @@ _GraphLayout? _setupGraphFrame(
 ///
 /// Handles the pipeline common to both: frame setup, Y-range for the visible
 /// window, axes/grid, zero baseline, missing-data hatching, and the
-/// segment-cached envelope rendering. Subclasses define the series being
+/// tile-cached envelope rendering. Subclasses define the series being
 /// plotted -- [series] (per-channel [EnvelopeSeries]), [computeYRange],
 /// [yTickLabel] -- plus layout tweaks and cache-key extras.
 abstract class _TimeSeriesGraphPainter extends CustomPainter {
@@ -2355,20 +1958,16 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   /// Channels to plot, bound to [_unit] in the workspace (see
   /// [_ConvertedChannel]).
   final List<_ConvertedChannel> _channels;
-  final SegmentedGraphCache cache;
-
-  /// Completed-block reduction memo, owned and disposed by the host [State]
-  /// next to [cache] (see [BlockReductionCache]).
-  final BlockReductionCache reductionCache;
+  final GraphSurfaceCache cache;
   final ColorScheme colorScheme;
 
-  /// Device pixel ratio used when rasterizing segment textures.
+  /// Device pixel ratio used when rasterizing tile textures.
   final double dpr;
 
   /// Axis-label paragraph cache, owned (and disposed) by the host [State].
   final AxisLabelCache labels;
 
-  /// Drives the rolling segment bakes: a repaint listenable for this painter
+  /// Drives the rolling tile bakes: a repaint listenable for this painter
   /// and the scheduler for extra frames when bake work remains (rolling
   /// bakes must complete even for static sources whose
   /// [GraphDataSource.repaint] never fires).
@@ -2380,7 +1979,6 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     required this._unit,
     required this._channels,
     required this.cache,
-    required this.reductionCache,
     required this.colorScheme,
     required this.dpr,
     required this.labels,
@@ -2408,18 +2006,13 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 
   /// Y-axis range (display units) for the visible window. Null when no
   /// active channel is plottable in the window: the graph paints blank.
-  /// [plotHeight] sizes the tick density (see [_kMinYTickPx]).
-  YAxisRange? computeYRange(
-    double viewStart,
-    double viewEnd,
-    double plotHeight,
-  );
+  /// [graphSz] sizes the block grid and tick density.
+  YAxisRange? computeYRange(double viewStart, double viewEnd, Size graphSz);
 
   String yTickLabel(double tick, YAxisRange yRange);
 
-  /// Per-channel tares mixed into the segment-cache destructive key. The
-  /// derivative returns none: a difference cancels them.
-  List<double?> cacheKeyTares() => const [];
+  /// Whether this series depends on tares. First differences cancel them.
+  bool get includeTares => false;
 
   /// Optional chrome drawn after the axes, before the data lines. [yRange]
   /// and [valueToY] are this paint pass's axis mapping, [viewStart]/
@@ -2493,7 +2086,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       return;
     }
 
-    final yRange = computeYRange(viewStart, viewEnd, graphSz.height);
+    final yRange = computeYRange(viewStart, viewEnd, graphSz);
     if (yRange == null) return;
 
     // Canvas y grows downward, so the axis is flipped: yMax maps to 0.
@@ -2593,14 +2186,13 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 
     drawOverlay(canvas, graphSz, yRange, valueToY, viewStart, viewEnd);
 
-    // -- Data lines (segment-cached envelope) --
+    // -- Data lines (tile-cached envelope) --
     final workRemains = _paintEnvelopeDataLayer(
       canvas,
       cache: cache,
-      reductionCache: reductionCache,
       data: _data,
       channels: _channels,
-      tares: cacheKeyTares(),
+      includeTares: includeTares,
       unit: _unit,
       gw: graphSz.width,
       gh: graphSz.height,
@@ -2634,7 +2226,6 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     required super.unit,
     required super.channels,
     required super.cache,
-    required super.reductionCache,
     required super.colorScheme,
     required super.dpr,
     required super.labels,
@@ -2645,32 +2236,24 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   double get topSpace => 4;
 
   @override
-  List<double?> cacheKeyTares() =>
-      _channels.map((bound) => bound.tare).toList();
+  bool get includeTares => true;
 
   @override
   EnvelopeSeries series(_ConvertedChannel channel) =>
       _taredEnvelopeSeries(_data, channel);
 
   @override
-  YAxisRange? computeYRange(
-    double viewStart,
-    double viewEnd,
-    double plotHeight,
-  ) {
-    // [windowedRawExtremes] folds full buckets and scans only the partial
-    // head/tail: O(window / bucketSize). No minimum-range floor; flat data
-    // hits the degeneracy guard in [_computeYRange].
-    // No plotted channel has data in the window: paint blank.
-    final ext = _foldNetExtremes(
-      _data,
-      _channels,
-      viewStart.floor(),
-      viewEnd.ceil(),
+  YAxisRange? computeYRange(double viewStart, double viewEnd, Size graphSz) {
+    final (foldStart, foldEnd) = foldBlockSpan(
+      viewStart,
+      viewEnd,
+      blockSizeFor(viewEnd - viewStart, graphSz.width),
     );
+    // Include every sample the block-aligned renderer can put into a bake.
+    final ext = _foldNetExtremes(_data, _channels, foldStart, foldEnd);
     if (ext == null) return null;
 
-    return _computeYRange(ext.$1, ext.$2, _unit, plotHeight);
+    return computeYAxisRange(ext.$1, ext.$2, _unit, graphSz.height);
   }
 
   /// Limit bars in the right gutter: one column per channel, a rail zone from
@@ -2744,7 +2327,6 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     required super.unit,
     required super.channels,
     required super.cache,
-    required super.reductionCache,
     required super.colorScheme,
     required super.dpr,
     required super.labels,
@@ -2793,17 +2375,13 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   );
 
   @override
-  YAxisRange? computeYRange(
-    double viewStart,
-    double viewEnd,
-    double plotHeight,
-  ) {
-    // [windowedExtremes] folds full buckets and scans only the partial
-    // head/tail: O(window / bucketSize).
-    final (startI, endI) = _data.clampToRetained(
-      viewStart.floor(),
-      viewEnd.ceil(),
+  YAxisRange? computeYRange(double viewStart, double viewEnd, Size graphSz) {
+    final (foldStart, foldEnd) = foldBlockSpan(
+      viewStart,
+      viewEnd,
+      blockSizeFor(viewEnd - viewStart, graphSz.width),
     );
+    final (startI, endI) = _data.clampToRetained(foldStart, foldEnd);
     // The first difference at index 0 has no predecessor.
     final from = math.max(startI, _data.oldestSample + firstSampleOffset);
 
@@ -2827,8 +2405,8 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
         if (dMax == null || d > dMax) dMax = d;
       }
     }
-    // No channel data: degenerate 0..1 axis via [_computeYRange]'s guard.
-    return _computeYRange(dMin ?? 0.0, dMax ?? 0.0, _unit, plotHeight);
+    // No channel data: degenerate 0..1 axis via [computeYAxisRange]'s guard.
+    return computeYAxisRange(dMin ?? 0.0, dMax ?? 0.0, _unit, graphSz.height);
   }
 
   @override
