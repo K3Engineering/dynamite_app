@@ -35,8 +35,10 @@ The Y fold covers the complete block-aligned render span, not just the nominal v
 
 ## Viewport Modes
 
-- **`GraphWindow(start, end, generation)`**: fixed absolute window. A different source generation reconciles to the initial viewport instead of evaluating stale indices. Static sources stay parked even at the right edge.
-- **`GraphLive(span)`**: follows the live edge. A non-null span rolls both edges; null pins the left edge to retention and auto-expands the right.
+- **`GraphWindow(start, end, generation)`**: fixed absolute window, clamped to the data edges. Static sources stay parked even at the right edge.
+- **`GraphLive(span, generation)`**: follows the live edge. A non-null span rolls both edges; null pins the left edge to retention and auto-expands the right.
+
+Both variants carry stream identity. A generation change restores the initial viewport instead of evaluating stale indices or retaining an old stream's zoom.
 
 `_GraphGeometry` computes the floating live projection once per update for all chart surfaces. It pattern-matches on `GraphController.viewport`; fixed windows remain integer.
 

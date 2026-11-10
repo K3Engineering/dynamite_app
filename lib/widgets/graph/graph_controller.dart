@@ -4,23 +4,25 @@ import 'package:flutter/foundation.dart';
 
 @immutable
 sealed class GraphViewport {
-  const new();
+  const new(this.generation);
+
+  /// Data-stream identity; a change restores the initial viewport.
+  final int generation;
 }
 
 /// Follow the live edge. Null [span] auto-expands with retained data.
 final class GraphLive extends GraphViewport {
-  const new([this.span]);
+  const new([this.span, int generation = 0]) : super(generation);
 
   final int? span;
 }
 
-/// A fixed absolute sample window, valid only for its data-stream generation.
+/// A fixed absolute sample window over its data-stream generation.
 final class GraphWindow extends GraphViewport {
-  const new(this.start, this.end, this.generation);
+  const new(this.start, this.end, int generation) : super(generation);
 
   final int start;
   final int end;
-  final int generation;
 }
 
 class GraphController extends ChangeNotifier {
@@ -31,18 +33,20 @@ class GraphController extends ChangeNotifier {
   final bool isLiveSource;
 
   new({this.minLiveSpan = 0, this.isLiveSource = true})
-    : _viewport = _initialViewport(minLiveSpan);
+    : _viewport = _initialViewport(minLiveSpan, 0);
 
   GraphViewport _viewport;
 
-  static GraphViewport _initialViewport(int minLiveSpan) =>
-      minLiveSpan > 0 ? GraphLive(minLiveSpan) : const GraphLive();
+  static GraphViewport _initialViewport(int minLiveSpan, int generation) =>
+      minLiveSpan > 0
+      ? GraphLive(minLiveSpan, generation)
+      : GraphLive(null, generation);
 
   GraphViewport get viewport => _viewport;
   bool get isLive => _viewport is GraphLive;
 
   void reset() {
-    _viewport = _initialViewport(minLiveSpan);
+    _viewport = _initialViewport(minLiveSpan, _viewport.generation);
     notifyListeners();
   }
 
@@ -56,6 +60,7 @@ class GraphController extends ChangeNotifier {
     required int span,
     required int totalSamples,
     required int oldestSample,
+    int generation = 0,
   }) {
     if (!isLiveSource) {
       throw StateError('a static graph cannot follow a live edge');
@@ -69,7 +74,7 @@ class GraphController extends ChangeNotifier {
     } else {
       lockedSpan = null;
     }
-    _viewport = GraphLive(lockedSpan);
+    _viewport = GraphLive(lockedSpan, generation);
     notifyListeners();
   }
 
@@ -81,10 +86,10 @@ class GraphController extends ChangeNotifier {
     int oldestSample, {
     int generation = 0,
   }) {
-    if (_viewport case GraphWindow(generation: final windowGeneration)
-        when windowGeneration != generation) {
-      _viewport = _initialViewport(minLiveSpan);
+    if (_viewport.generation != generation) {
+      _viewport = _initialViewport(minLiveSpan, generation);
     }
+    if (!isLiveSource && totalSamples == 0) return (0, 0);
     if (!isLiveSource && _viewport is GraphLive) {
       final live = _viewport as GraphLive;
       final s = live.span ?? defaultLiveSpan(totalSamples, oldestSample);
@@ -113,15 +118,15 @@ class GraphController extends ChangeNotifier {
     int oldestSample, {
     int generation = 0,
   }) {
-    final start = math.max(
-      newStart,
-      _minWindowStart(oldestSample, totalSamples, span),
-    );
+    final minStart = _minWindowStart(oldestSample, totalSamples, span);
+    final maxStart = totalSamples - span;
+    final start = math.min(math.max(newStart, minStart), maxStart);
     if (isLiveSource && start + span >= totalSamples) {
       goLive(
         span: span,
         totalSamples: totalSamples,
         oldestSample: oldestSample,
+        generation: generation,
       );
       return;
     }

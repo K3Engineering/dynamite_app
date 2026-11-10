@@ -10,12 +10,14 @@ import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
 import 'package:dynamite_app/models/session_catalog.dart';
 import 'package:dynamite_app/services/app_settings.dart';
+import 'package:dynamite_app/services/session_data.dart';
 import 'package:dynamite_app/screens/session_detail_screen.dart';
 import 'package:dynamite_app/services/live_session_writer.dart';
 import 'package:dynamite_app/services/session_files_io.dart';
 import 'package:dynamite_app/services/session_journal.dart';
 import 'package:dynamite_app/services/session_store.dart';
 import 'package:dynamite_app/widgets/empty_placeholder.dart';
+import 'package:dynamite_app/widgets/graph_components.dart';
 
 /// Widget tests for the Session detail screen: a healthy session renders
 /// its stats; a session whose data decodes to no honest view renders the
@@ -139,6 +141,34 @@ void main() {
     expect(find.text('Delete'), findsOneWidget);
     await tester.tapAt(const Offset(10, 10));
     await tester.pumpAndSettle();
+
+    await unmount(tester);
+  });
+
+  testWidgets('empty SessionData renders an empty graph', (tester) async {
+    final data = SessionData(
+      channels: [for (var ch = 0; ch < channels; ch++) Int32List(0)],
+      sampleRate: 1000,
+      sampleCount: 0,
+      calibrations: meta().calibration,
+      tares: meta().tares,
+      ssnOrigin: 0,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GraphWorkspace(
+          data: data,
+          ctrl: GraphController(isLiveSource: false),
+          unit: .mVv,
+          activeChannels: const [0, 1, 2, 3],
+          isLiveSource: false,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(GraphWorkspace), findsOneWidget);
+    expect(tester.takeException(), isNull);
 
     await unmount(tester);
   });

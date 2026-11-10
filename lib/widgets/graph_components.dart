@@ -770,6 +770,7 @@ class _LiveButton extends StatelessWidget {
               span: end - start,
               totalSamples: data.totalSamples,
               oldestSample: data.oldestSample,
+              generation: data.dataGeneration,
             ),
             icon: const Icon(Icons.fast_forward, size: 16),
             label: const Text('LIVE'),

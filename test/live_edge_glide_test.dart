@@ -95,6 +95,7 @@ void main() {
       span: hub.totalSamples,
       totalSamples: hub.totalSamples,
       oldestSample: hub.oldestSample,
+      generation: hub.dataGeneration,
     );
     expect(
       ctrl.viewport,
@@ -128,6 +129,7 @@ void main() {
       span: 400,
       totalSamples: hub.totalSamples,
       oldestSample: hub.oldestSample,
+      generation: hub.dataGeneration,
     );
     linkEvent();
     await pumpFrames(3);
