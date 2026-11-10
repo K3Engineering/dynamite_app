@@ -57,7 +57,13 @@ void main() {
     // Park on [0, 5000), then let the ring wrap eat the window from the
     // left (oldestSample lags total by maxDataSz once past capacity).
     feed(10000);
-    ctrl.applyWindow(0, 5000, hub.totalSamples, hub.oldestSample);
+    ctrl.applyWindow(
+      0,
+      5000,
+      hub.totalSamples,
+      hub.oldestSample,
+      generation: hub.dataGeneration,
+    );
 
     // Half drained: samples [0, 2500) of the window are evicted.
     feed(DataHub.maxDataSz + 2500 - hub.totalSamples);
@@ -81,7 +87,12 @@ void main() {
 
     // A pan re-anchors the window onto the retention head (see
     // graph_controller_test), back over drawable data.
-    ctrl.pan(0, hub.totalSamples, hub.oldestSample);
+    ctrl.pan(
+      0,
+      hub.totalSamples,
+      hub.oldestSample,
+      generation: hub.dataGeneration,
+    );
     await tester.pump();
     expect(tester.takeException(), isNull);
 

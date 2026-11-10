@@ -37,7 +37,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   /// Load state of the session's sample data (see [_LoadState]).
   _LoadState _loadState = const _Loading();
 
-  final GraphController _graphCtrl = GraphController();
+  final GraphController _graphCtrl = GraphController(isLiveSource: false);
 
   /// dF/dt pane visibility for the replay graph.
   bool _showDerivative = false;

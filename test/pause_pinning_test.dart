@@ -72,7 +72,13 @@ void main() {
     // simulate a user zoom/pan/triggered _syncTicker at any point during
     // the pause.
     final int frozenTotal = hub.totalSamples;
-    ctrl.zoom(1.2, 1.0, hub.totalSamples, hub.oldestSample);
+    ctrl.zoom(
+      1.2,
+      1.0,
+      hub.totalSamples,
+      hub.oldestSample,
+      generation: hub.dataGeneration,
+    );
     ctrl.applyWindow(
       frozenTotal - 400,
       400,

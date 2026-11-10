@@ -218,11 +218,8 @@ void main() {
     });
   });
 
-  /// The viewport-side half of the per-stream reset: when a new device stream
-  /// clears the hub, the live tab snaps the controller back to live follow.
-  /// That reset is the ONLY guard: a parked window must not outlive the data,
-  /// and [effectiveRange] asserts the invariant rather than silently clamping
-  /// a violation.
+  /// Parked windows carry stream identity. Same-generation corruption fails in
+  /// release too; a generation change reconciles to the initial live viewport.
   group('GraphController across a stream reset', () {
     test('a stale panned window violates the invariant loudly', () {
       // A window parked deep in history (set while the old stream had plenty
@@ -231,8 +228,8 @@ void main() {
       // reset in live_tab.dart on HubCleared stayed the only guard.
       final ctrl = GraphController(minLiveSpan: 20000);
       ctrl.applyWindow(100000, 100000, 300000, 0); // user panned into history
-      expect(() => ctrl.effectiveRange(0, 0), throwsA(isA<AssertionError>()));
-      expect(() => ctrl.effectiveRange(50, 0), throwsA(isA<AssertionError>()));
+      expect(() => ctrl.effectiveRange(0, 0), throwsA(isA<StateError>()));
+      expect(() => ctrl.effectiveRange(50, 0), throwsA(isA<StateError>()));
     });
 
     test('goLive restores a safe live-follow range', () {
@@ -246,6 +243,33 @@ void main() {
       expect(ctrl.isLive, isTrue);
       expect(end, 0);
       expect(start, -20000);
+    });
+
+    test(
+      'a generation change drops a parked window without a side channel',
+      () {
+        final ctrl = GraphController(minLiveSpan: 100);
+        ctrl.applyWindow(100, 100, 1000, 0, generation: 7);
+        expect(ctrl.isLive, isFalse);
+        final (start, end) = ctrl.effectiveRange(0, 0, generation: 8);
+        expect(ctrl.isLive, isTrue);
+        expect((start, end), (-100, 0));
+      },
+    );
+  });
+
+  group('static source viewport', () {
+    test('initial zoom is centered and right-edge windows stay parked', () {
+      final ctrl = GraphController(isLiveSource: false);
+      ctrl.zoom(2, 0.5, 1000, 0);
+      expect(ctrl.isLive, isFalse);
+      expect(ctrl.effectiveRange(1000, 0), (250, 750));
+
+      ctrl.applyWindow(750, 250, 1000, 0);
+      expect(ctrl.isLive, isFalse);
+      expect(ctrl.effectiveRange(1000, 0), (750, 1000));
+      ctrl.zoom(2, 0.5, 1000, 0);
+      expect(ctrl.effectiveRange(1000, 0), (812, 937));
     });
   });
 }

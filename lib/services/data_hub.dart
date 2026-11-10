@@ -115,7 +115,7 @@ class DataHub extends ChangeNotifier
   List<LoadCellProfile?> _loadCells = List.filled(kAdcChannelCount, null);
 
   /// Bumped whenever the calibration set changes (board data or load-cell
-  /// assignments); renderers mix it into their segment-cache keys.
+  /// assignments); renderers mix it into their tile-cache keys.
   int _calibrationVersion = 0;
 
   /// Bumped whenever a tare offset changes (window commit, reset, manual

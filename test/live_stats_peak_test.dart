@@ -57,13 +57,25 @@ void main() {
     expect(find.text('+700'), findsNWidgets(kAdcChannelCount)); // Live row
 
     // Second half in view: the 900s are scrolled out of the window.
-    ctrl.applyWindow(500, 500, hub.totalSamples, hub.oldestSample);
+    ctrl.applyWindow(
+      500,
+      500,
+      hub.totalSamples,
+      hub.oldestSample,
+      generation: hub.dataGeneration,
+    );
     await tester.pump();
     expect(find.text('+900'), findsNothing);
     expect(find.text('+700'), findsNWidgets(kAdcChannelCount * 2));
 
     // First half in view (parked, not at the live edge): the peak returns.
-    ctrl.applyWindow(0, 500, hub.totalSamples, hub.oldestSample);
+    ctrl.applyWindow(
+      0,
+      500,
+      hub.totalSamples,
+      hub.oldestSample,
+      generation: hub.dataGeneration,
+    );
     await tester.pump();
     expect(ctrl.isLive, isFalse);
     expect(find.text('+900'), findsNWidgets(kAdcChannelCount));
