@@ -49,10 +49,9 @@ void main() {
       MaterialApp(
         home: GraphWorkspace(
           data: data,
-          ctrl: GraphController(),
+          ctrl: GraphController(isLiveSource: isLiveSource),
           unit: DisplayUnit.mVv.effective(data.unitAvailability),
           activeChannels: activeChannels,
-          isLiveSource: isLiveSource,
           showDerivative: showDerivative,
         ),
       ),

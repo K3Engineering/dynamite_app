@@ -268,9 +268,27 @@ void main() {
       expect(ctrl.isLive, isTrue);
       expect((start, end), (-100, 0));
     });
+
+    test('goLive at 0 samples with minLiveSpan 0 does not lock span to 0', () {
+      final ctrl = GraphController();
+      ctrl.goLive(span: 0, totalSamples: 0, oldestSample: 0);
+      expect(ctrl.effectiveRange(0, 0), (0, 0));
+      expect(ctrl.effectiveRange(1000, 0), (0, 1000));
+    });
   });
 
   group('static source viewport', () {
+    test('is never live from construction, reset, or empty data', () {
+      final ctrl = GraphController(isLiveSource: false);
+      expect(ctrl.isLive, isFalse);
+      expect(ctrl.viewport, isA<GraphFull>());
+
+      ctrl.applyWindow(100, 200, 1000, 0);
+      ctrl.reset();
+      expect(ctrl.isLive, isFalse);
+      expect(ctrl.viewport, isA<GraphFull>());
+    });
+
     test('initial zoom is centered and right-edge windows stay parked', () {
       final ctrl = GraphController(isLiveSource: false);
       ctrl.zoom(2, 0.5, 1000, 0);
@@ -284,9 +302,15 @@ void main() {
       expect(ctrl.effectiveRange(1000, 0), (812, 937));
     });
 
-    test('an empty source has an empty range', () {
+    test('an empty source has an empty range and survives pan/zoom', () {
       final ctrl = GraphController(isLiveSource: false);
       expect(ctrl.effectiveRange(0, 0), (0, 0));
+      expect(ctrl.isLive, isFalse);
+
+      ctrl.pan(10, 0, 0);
+      ctrl.zoom(2, 0.5, 0, 0);
+      expect(ctrl.effectiveRange(0, 0), (0, 0));
+      expect(ctrl.isLive, isFalse);
     });
 
     test('pan and recenter clamp past the right edge without going live', () {

@@ -121,11 +121,15 @@ typedef CacheEnv = ({
 CacheEnv cacheEnvFor(CacheConfig c) {
   final double viewEnd = c.viewStart + c.viewSpan;
   final double pps = c.gw / c.viewSpan;
+  // Samples exist only at non-negative indices, so young live views with
+  // viewStart < 0 never spend textures on negative-sample empty space.
+  final int covStart = math.max(0, c.viewStart.floor());
+  final int covEnd = math.max(covStart, viewEnd.ceil());
   return (
     config: c,
     pps: pps,
-    covStart: c.viewStart.floor(),
-    covEnd: viewEnd.ceil(),
+    covStart: covStart,
+    covEnd: covEnd,
     targetSpan: math.max(1, (kTileTargetPx / pps).round()),
   );
 }
@@ -135,9 +139,9 @@ typedef BakePlan = ({int from, int to, int start, int end});
 typedef BlitRect = ({
   TileMeta tile,
   double clipL,
+  double clipT,
   double clipR,
   double clipB,
-  double clipT,
   double dx,
   double dy,
   double dw,
@@ -150,11 +154,10 @@ typedef GapRect = ({
   int start,
   int end,
   double x,
-  int texW,
   double clipL,
+  double clipT,
   double clipR,
   double clipB,
-  double clipT,
 });
 
 typedef CacheFrame = ({
@@ -331,9 +334,10 @@ BakePlan? _planRefresh(List<TileMeta> tiles, int i, CacheEnv env) {
   int mergedEnd = end;
   int to = i;
   if ((mergedEnd - start) * env.pps < kTileTargetPx / 2) {
+    final int domainEnd = math.min(env.covEnd, bakeable);
     final int uncoveredLimit = math.min(
-      to + 1 < tiles.length ? tiles[to + 1].start : bakeable,
-      bakeable,
+      to + 1 < tiles.length ? tiles[to + 1].start : domainEnd,
+      domainEnd,
     );
     mergedEnd = math.max(
       mergedEnd,
@@ -342,6 +346,7 @@ BakePlan? _planRefresh(List<TileMeta> tiles, int i, CacheEnv env) {
     if ((mergedEnd - start) * env.pps < kTileTargetPx / 2 &&
         to + 1 < tiles.length &&
         tiles[to + 1].start == mergedEnd &&
+        tiles[to + 1].end <= domainEnd &&
         (tiles[to + 1].end - start) * env.pps <= 1.5 * kTileTargetPx) {
       to++;
       mergedEnd = tiles[to].end;
@@ -388,11 +393,10 @@ GapRect _gapRect(int start, int end, CacheConfig c, double pps) {
     start: start,
     end: end,
     x: x,
-    texW: math.max(1, w.ceil()),
     clipL: math.max(x, 0.0),
+    clipT: -c.vPad,
     clipR: math.min(x + w, c.gw),
-    clipB: -c.vPad,
-    clipT: c.gh + c.vPad,
+    clipB: c.gh + c.vPad,
   );
 }
 
@@ -413,9 +417,9 @@ List<BlitRect> _blits(CacheState state, CacheEnv env) {
     blits.add((
       tile: s,
       clipL: clipL,
+      clipT: -s.vPad,
       clipR: clipR,
-      clipB: -s.vPad,
-      clipT: c.gh + s.vPad,
+      clipB: c.gh + s.vPad,
       dx: x1 - s.hPad * xs,
       dy: yTop - s.vPad * ys,
       dw: (s.contentW + 2 * s.hPad) * xs,

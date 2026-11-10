@@ -3,7 +3,7 @@
 - `../graph_components.dart`: widgets, graph chrome, per-channel conversion and the shared cached-paint entry point.
 - `axis_math.dart`: tick ladders, absolute tick grids and Y-range snapping.
 - `envelope_renderer.dart`: absolute block-grid geometry, vertex batching and mean-line/min-max-band rasterization.
-- `graph_controller.dart`: generation-aware `GraphLive` / `GraphWindow` viewport state and pan/zoom math.
+- `graph_controller.dart`: generation-aware `GraphLive` / `GraphFull` / `GraphWindow` viewport state and pan/zoom math.
 - `surface_cache.dart`: the tile and reduction caches belonging to one surface.
 - `block_reduction_cache.dart`: bounded direct-mapped memo of complete `BlockReduction`s in display units.
 - `tile_cache.dart`: `TileMeta` texture ownership, canvas calls and `BakePump`.
@@ -35,10 +35,11 @@ The Y fold covers the complete block-aligned render span, not just the nominal v
 
 ## Viewport Modes
 
+- **`GraphFull(generation)`**: parked across the full retained range (`[oldestSample, totalSamples)`). Initial/reset state for static sources.
 - **`GraphWindow(start, end, generation)`**: fixed absolute window, clamped to the data edges. Static sources stay parked even at the right edge.
-- **`GraphLive(span, generation)`**: follows the live edge. A non-null span rolls both edges; null pins the left edge to retention and auto-expands the right.
+- **`GraphLive(span, generation)`**: follows the live edge (live sources only). A non-null span rolls both edges; null pins the left edge to retention and auto-expands the right.
 
-Both variants carry stream identity. A generation change restores the initial viewport instead of evaluating stale indices or retaining an old stream's zoom.
+All variants carry stream identity. A generation change restores the initial viewport instead of evaluating stale indices or retaining an old stream's zoom.
 
 `_GraphGeometry` computes the floating live projection once per update for all chart surfaces. It pattern-matches on `GraphController.viewport`; fixed windows remain integer.
 

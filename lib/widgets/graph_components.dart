@@ -74,10 +74,6 @@ void _handleGraphPointerScroll(
 }
 
 // ---------------------------------------------------------------------------
-// Shared Graph Data Source
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // Unit-bound channels
 // ---------------------------------------------------------------------------
 
@@ -180,6 +176,14 @@ class _Minimap extends StatefulWidget {
 class _MinimapState extends State<_Minimap> {
   final GraphSurfaceCache _cache = GraphSurfaceCache();
   final BakePump _bakePump = BakePump();
+
+  @override
+  void didUpdateWidget(_Minimap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.dataSource != widget.dataSource) {
+      _cache.clear();
+    }
+  }
 
   @override
   void dispose() {
@@ -525,12 +529,6 @@ class GraphWorkspace extends StatefulWidget {
   final List<int> activeChannels;
   final bool showDerivative;
 
-  /// Whether the source is the live feed (vs a loaded session); gates the
-  /// LIVE button and the semantics wording. Unrelated to
-  /// [GraphController.isLive] (viewport mode) and
-  /// the `GraphLive` span (rolling animation).
-  final bool isLiveSource;
-
   const new({
     super.key,
     required this.data,
@@ -538,7 +536,6 @@ class GraphWorkspace extends StatefulWidget {
     required this.unit,
     required this.activeChannels,
     this.showDerivative = false,
-    this.isLiveSource = true,
   });
 
   @override
@@ -588,8 +585,12 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
       widget.ctrl.addListener(_onGeometrySourceChanged);
       widget.data.repaint.addListener(_onGeometrySourceChanged);
       // Static sources all use generation 0, so identity is the reset signal.
-      if (oldWidget.data != widget.data && oldWidget.ctrl == widget.ctrl) {
-        widget.ctrl.reset();
+      if (oldWidget.data != widget.data) {
+        _forceCache.clear();
+        _derivCache.clear();
+        if (oldWidget.ctrl == widget.ctrl) {
+          widget.ctrl.reset();
+        }
       }
       _onGeometrySourceChanged();
     }
@@ -659,7 +660,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
       container: true,
       explicitChildNodes: true,
       label: _graphSemanticsLabel(
-        live: widget.isLiveSource,
+        live: widget.ctrl.isLiveSource,
         channels: [for (final bound in convertedChannels) bound.channel],
         unit: unit,
         hasDerivative: widget.showDerivative,
@@ -715,7 +716,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
               ),
             ],
           ),
-          if (widget.isLiveSource)
+          if (widget.ctrl.isLiveSource)
             _LiveButton(data: widget.data, ctrl: widget.ctrl),
         ],
       ),
@@ -752,9 +753,9 @@ class _LiveButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: ctrl,
+      listenable: Listenable.merge([ctrl, data.repaint]),
       builder: (context, _) {
-        if (ctrl.isLive || data.totalSamples == 0) {
+        if (data.totalSamples == 0) {
           return const SizedBox.shrink();
         }
         final (start, end) = ctrl.effectiveRange(
@@ -762,6 +763,9 @@ class _LiveButton extends StatelessWidget {
           data.oldestSample,
           generation: data.dataGeneration,
         );
+        if (ctrl.isLive) {
+          return const SizedBox.shrink();
+        }
         return Positioned(
           right: 64,
           top: 8,
@@ -832,13 +836,12 @@ class GraphZoomControls extends StatelessWidget {
   /// following it and at the window center otherwise.
   void _zoomBy(double factor) {
     if (data.totalSamples <= 0) return;
-    ctrl.zoom(
-      factor,
-      ctrl.isLive ? 1.0 : 0.5,
+    final (s, e) = ctrl.effectiveRange(
       data.totalSamples,
       data.oldestSample,
       generation: data.dataGeneration,
     );
+    _zoomToSpan(((e - s) / factor).round(), s, e);
   }
 
   /// Set an exact window span in samples. [GraphController.zoomTo] clamps;
@@ -852,11 +855,15 @@ class GraphZoomControls extends StatelessWidget {
       data.oldestSample,
       generation: data.dataGeneration,
     );
+    _zoomToSpan(spanSamples, s, e);
+  }
+
+  void _zoomToSpan(int spanSamples, int baseStart, int baseEnd) {
     ctrl.zoomTo(
       spanSamples,
       ctrl.isLive ? 1.0 : 0.5,
-      baseStart: s,
-      baseSpan: e - s,
+      baseStart: baseStart,
+      baseSpan: baseEnd - baseStart,
       anchorLiveEdge: ctrl.isLive,
       totalSamples: data.totalSamples,
       oldestSample: data.oldestSample,
@@ -1235,12 +1242,6 @@ class AxisLabelCache {
     _retired.clear();
   }
 }
-
-// ---------------------------------------------------------------------------
-// Nice Y-axis ranges. Ticks and the snapped range stay in base display units
-// so the data pipeline and tile cache never see a rescale; only the labels
-// render through the unit's SI-prefix rung.
-// ---------------------------------------------------------------------------
 
 /// Minimum spacing between axis ticks (logical px): [Size]-based density
 /// instead of a fixed tick count, so wide/tall plots get more labels than a
@@ -1861,7 +1862,7 @@ _GraphGeometry _computeGeometry(GraphDataSource data, GraphController ctrl) {
     case GraphLive():
       vStart = viewStart.toDouble();
       vEnd = liveEdge((viewEnd - viewStart).toDouble());
-    case GraphWindow():
+    case GraphWindow() || GraphFull():
       vStart = viewStart.toDouble();
       vEnd = viewEnd.toDouble();
   }
@@ -2005,7 +2006,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 
   /// Y-axis range (display units) for the visible window. Null when no
   /// active channel is plottable in the window: the graph paints blank.
-  /// [plotHeight] sizes the tick density (see [_kMinYTickPx]).
+  /// [graphSz] sizes the block grid and tick density.
   YAxisRange? computeYRange(double viewStart, double viewEnd, Size graphSz);
 
   String yTickLabel(double tick, YAxisRange yRange);
@@ -2404,7 +2405,7 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
         if (dMax == null || d > dMax) dMax = d;
       }
     }
-    // No channel data: degenerate 0..1 axis via [_computeYRange]'s guard.
+    // No channel data: degenerate 0..1 axis via [computeYAxisRange]'s guard.
     return computeYAxisRange(dMin ?? 0.0, dMax ?? 0.0, _unit, graphSz.height);
   }
 

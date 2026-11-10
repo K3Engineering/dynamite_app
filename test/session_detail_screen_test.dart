@@ -161,7 +161,6 @@ void main() {
           ctrl: GraphController(isLiveSource: false),
           unit: .mVv,
           activeChannels: const [0, 1, 2, 3],
-          isLiveSource: false,
         ),
       ),
     );
@@ -169,6 +168,68 @@ void main() {
 
     expect(find.byType(GraphWorkspace), findsOneWidget);
     expect(tester.takeException(), isNull);
+
+    await unmount(tester);
+  });
+
+  testWidgets('swapping static SessionData resets viewport and tile caches', (
+    tester,
+  ) async {
+    SessionData sessionOf(int count, int rawValue) => SessionData(
+      channels: [
+        for (var ch = 0; ch < channels; ch++)
+          Int32List(count)..fillRange(0, count, rawValue),
+      ],
+      sampleRate: 1000,
+      sampleCount: count,
+      calibrations: meta().calibration,
+      tares: meta().tares,
+      ssnOrigin: 0,
+    );
+
+    final ctrl = GraphController(isLiveSource: false);
+    final longSession = sessionOf(5000, 10000);
+    final shortSession = sessionOf(100, 500);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          height: 300,
+          child: GraphWorkspace(
+            data: longSession,
+            ctrl: ctrl,
+            unit: .raw,
+            activeChannels: const [0],
+            showDerivative: true,
+          ),
+        ),
+      ),
+    );
+    for (var i = 0; i < 4; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    ctrl.applyWindow(2000, 1000, longSession.totalSamples, 0);
+    await tester.pump();
+
+    // Swap in a shorter static session (still generation 0): both the parked
+    // window [2000, 3000) and the [0, 5000) tile/reduction caches must clear.
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          height: 300,
+          child: GraphWorkspace(
+            data: shortSession,
+            ctrl: ctrl,
+            unit: .raw,
+            activeChannels: const [0],
+            showDerivative: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(ctrl.effectiveRange(shortSession.totalSamples, 0), (0, 100));
 
     await unmount(tester);
   });

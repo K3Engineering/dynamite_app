@@ -115,10 +115,9 @@ void main() {
         );
       }
     }
-    // Fractional windows (the smooth-scroll lead makes every live frame
-    // fractional): floor/ceil off-by-ones in the coverage window shave
-    // 1-sample edge slivers, baked at span-8 pps.
-    for (final vs in [2.5, 10.3]) {
+    // Fractional and negative-start windows (smooth-scroll lead makes live
+    // frames fractional; young live views overhang sample 0 on the left).
+    for (final vs in [-4.0, 2.5, 10.3]) {
       for (final span in [8.0, 16.0]) {
         inputs.add(
           _config(
@@ -291,10 +290,13 @@ void main() {
         // is self-consistent and the containment checks above cannot see
         // it; the floor/ceil-swap mutant survives without this): what the
         // frame would draw must cover the whole intended window.
-        final wantStart = input.viewStart.floor();
-        final wantEnd = math.min(
-          (input.viewStart + input.viewSpan).ceil(),
-          input.totalSamples,
+        final wantStart = math.max(0, input.viewStart.floor());
+        final wantEnd = math.max(
+          wantStart,
+          math.min(
+            (input.viewStart + input.viewSpan).ceil(),
+            input.totalSamples,
+          ),
         );
         final raster = step.frame;
         final intervals = [

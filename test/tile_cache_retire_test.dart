@@ -8,7 +8,7 @@ import 'package:dynamite_app/widgets/graph/tile_cache_functional.dart';
 // otherwise have no opinion about.
 //
 // The visible-retirement path also has an end-to-end test in
-// segmented_graph_cache_test.dart ('a stale tile the receded horizon fully
+// tile_graph_cache_test.dart ('a stale tile the receded horizon fully
 // overtakes stops blitting ...'); these cover the cases paint() cannot reach
 // deterministically.
 void main() {
@@ -198,5 +198,54 @@ void main() {
       isFalse,
       reason: 'a frame that drops a tile must not reuse the list',
     );
+  });
+
+  test('refreshing a narrow stale tile leaves a horizon-straddling fresh right '
+      'neighbor intact', () {
+    // Window [0, 100), gw 400 => pps 4. [0, 20) is 80 px (< target/2) and
+    // ghost-stale; [20, 60) is fresh and extends past receded horizon 45.
+    // Absorbing [20, 60) and clamping to 45 would destroy [45, 60).
+    final c = config(
+      viewStart: 0,
+      viewSpan: 100,
+      totalSamples: 100,
+      bakeHorizon: 45,
+      ghostKey: const ['new'],
+    );
+    final state = stateOf([
+      meta(0, 20, contentW: 20 * 4, ghostKey: const ['old'], textureId: 1),
+      meta(20, 60, contentW: 40 * 4, ghostKey: const ['new'], textureId: 2),
+    ], c);
+    final step = stepCache(state, c);
+    expect(step.frame.bake, (from: 0, to: 0, start: 0, end: 20));
+    expect(
+      [for (final t in step.state.tiles) (t.start, t.end)],
+      [(0, 20), (20, 60)],
+    );
+  });
+
+  test('negative viewStart clamps coverage at sample 0 without negative bakes', () {
+    // Young live view [-19800, 200) at gw 400 => pps 0.02; [0, 100) is 2 px
+    // (< 40 px threshold), so nothing is baked.
+    final young = config(
+      viewStart: -19800,
+      viewSpan: 20000,
+      totalSamples: 200,
+      bakeHorizon: 100,
+    );
+    final quiet = stepCache(const CacheState(), young);
+    expect(quiet.frame.bake, isNull);
+    expect(quiet.frame.gaps.single.start, 0);
+    expect(quiet.frame.gaps.single.end, 200);
+
+    // Once [0, 4900) exceeds the 40 px threshold (98 px), the bake starts at 0.
+    final grown = config(
+      viewStart: -15000,
+      viewSpan: 20000,
+      totalSamples: 5000,
+      bakeHorizon: 4900,
+    );
+    final baked = stepCache(const CacheState(), grown);
+    expect(baked.frame.bake, (from: 0, to: -1, start: 0, end: 4900));
   });
 }

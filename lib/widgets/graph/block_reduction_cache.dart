@@ -18,6 +18,13 @@ class BlockReductionCache {
   int _blockSize = -1;
   List<Object?> _suppressKey = const [];
 
+  void clear() {
+    _byChannel.clear();
+    _generation = -1;
+    _blockSize = -1;
+    _suppressKey = const [];
+  }
+
   /// Frame upkeep with the same identity values as [TileGraphCache].
   void prepare({
     required int generation,
@@ -55,8 +62,8 @@ class BlockReductionCache {
 }
 
 class _ChannelReductions {
-  final Int64List tags = Int64List(BlockReductionCache._slotCount)
-    ..fillRange(0, BlockReductionCache._slotCount, -1);
+  // Plain List<int>, not Int64List (unsupported on dart2js); exact to 2^53.
+  final List<int> tags = List<int>.filled(BlockReductionCache._slotCount, -1);
   final List<BlockReduction?> values = List<BlockReduction?>.filled(
     BlockReductionCache._slotCount,
     null,

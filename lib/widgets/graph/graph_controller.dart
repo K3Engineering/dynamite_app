@@ -12,14 +12,23 @@ sealed class GraphViewport {
 
 /// Follow the live edge. Null [span] auto-expands with retained data.
 final class GraphLive extends GraphViewport {
-  const new([this.span, int generation = 0]) : super(generation);
+  const new([this.span, int generation = 0])
+    : assert(span == null || span > 0),
+      super(generation);
 
   final int? span;
 }
 
+/// Parked across the full retained range `[oldestSample, totalSamples)`.
+final class GraphFull extends GraphViewport {
+  const new([super.generation = 0]);
+}
+
 /// A fixed absolute sample window over its data-stream generation.
 final class GraphWindow extends GraphViewport {
-  const new(this.start, this.end, int generation) : super(generation);
+  const new(this.start, this.end, int generation)
+    : assert(start < end),
+      super(generation);
 
   final int start;
   final int end;
@@ -33,20 +42,36 @@ class GraphController extends ChangeNotifier {
   final bool isLiveSource;
 
   new({this.minLiveSpan = 0, this.isLiveSource = true})
-    : _viewport = _initialViewport(minLiveSpan, 0);
+    : assert(minLiveSpan >= 0),
+      assert(isLiveSource || minLiveSpan == 0),
+      _viewport = _initialViewport(
+        minLiveSpan,
+        isLiveSource: isLiveSource,
+        generation: 0,
+      );
 
   GraphViewport _viewport;
 
-  static GraphViewport _initialViewport(int minLiveSpan, int generation) =>
-      minLiveSpan > 0
-      ? GraphLive(minLiveSpan, generation)
-      : GraphLive(null, generation);
+  static GraphViewport _initialViewport(
+    int minLiveSpan, {
+    required bool isLiveSource,
+    required int generation,
+  }) {
+    if (!isLiveSource) return GraphFull(generation);
+    return minLiveSpan > 0
+        ? GraphLive(minLiveSpan, generation)
+        : GraphLive(null, generation);
+  }
 
   GraphViewport get viewport => _viewport;
   bool get isLive => _viewport is GraphLive;
 
   void reset() {
-    _viewport = _initialViewport(minLiveSpan, _viewport.generation);
+    _viewport = _initialViewport(
+      minLiveSpan,
+      isLiveSource: isLiveSource,
+      generation: _viewport.generation,
+    );
     notifyListeners();
   }
 
@@ -67,9 +92,9 @@ class GraphController extends ChangeNotifier {
     }
     final defaultSpan = defaultLiveSpan(totalSamples, oldestSample);
     final int? lockedSpan;
-    if (span < defaultSpan) {
+    if (span > 0 && span < defaultSpan) {
       lockedSpan = span;
-    } else if (span <= minLiveSpan) {
+    } else if (minLiveSpan > 0 && span <= minLiveSpan) {
       lockedSpan = minLiveSpan;
     } else {
       lockedSpan = null;
@@ -87,18 +112,23 @@ class GraphController extends ChangeNotifier {
     int generation = 0,
   }) {
     if (_viewport.generation != generation) {
-      _viewport = _initialViewport(minLiveSpan, generation);
-    }
-    if (!isLiveSource && totalSamples == 0) return (0, 0);
-    if (!isLiveSource && _viewport is GraphLive) {
-      final live = _viewport as GraphLive;
-      final s = live.span ?? defaultLiveSpan(totalSamples, oldestSample);
-      _viewport = GraphWindow(totalSamples - s, totalSamples, generation);
+      _viewport = _initialViewport(
+        minLiveSpan,
+        isLiveSource: isLiveSource,
+        generation: generation,
+      );
     }
     switch (_viewport) {
       case GraphLive(:final span):
         final s = span ?? defaultLiveSpan(totalSamples, oldestSample);
         return (totalSamples - s, totalSamples);
+      case GraphFull():
+        if (oldestSample > totalSamples) {
+          throw StateError(
+            'invalid data bounds [$oldestSample, $totalSamples)',
+          );
+        }
+        return (oldestSample, totalSamples);
       case GraphWindow(:final start, :final end):
         if (start >= end || end > totalSamples) {
           throw StateError(
@@ -118,19 +148,30 @@ class GraphController extends ChangeNotifier {
     int oldestSample, {
     int generation = 0,
   }) {
-    final minStart = _minWindowStart(oldestSample, totalSamples, span);
-    final maxStart = totalSamples - span;
+    if (!isLiveSource && (totalSamples <= oldestSample || span <= 0)) {
+      _viewport = GraphFull(generation);
+      notifyListeners();
+      return;
+    }
+    final effectiveSpan = isLiveSource
+        ? span
+        : math.min(span, totalSamples - oldestSample);
+    final minStart = _minWindowStart(oldestSample, totalSamples, effectiveSpan);
+    final maxStart = totalSamples - effectiveSpan;
     final start = math.min(math.max(newStart, minStart), maxStart);
-    if (isLiveSource && start + span >= totalSamples) {
+    if (isLiveSource && start + effectiveSpan >= totalSamples) {
       goLive(
-        span: span,
+        span: effectiveSpan,
         totalSamples: totalSamples,
         oldestSample: oldestSample,
         generation: generation,
       );
       return;
     }
-    _viewport = GraphWindow(start, start + span, generation);
+    if (effectiveSpan <= 0) {
+      throw ArgumentError.value(span, 'span', 'must be positive');
+    }
+    _viewport = GraphWindow(start, start + effectiveSpan, generation);
     notifyListeners();
   }
 

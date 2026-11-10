@@ -633,9 +633,9 @@ void main() {
       ));
     });
 
-    test('a refresh swallowing a right neighbor past a RECEDED horizon '
-        'clamps to the horizon', () {
-      // pps 12.5, target span 16 throughout. Build the magic pair:
+    test('a refresh next to a fresh right neighbor past a receded horizon '
+        'keeps the neighbor intact', () {
+      // pps 12.5, target span 16 throughout. Build the pair:
       // A=[10, 16)@y100 (y-drift-stale vs the end state) abutting
       // B=[16, 32)@y130 (fresh), with B's tail past a receded horizon.
       h.paint(viewStart: 0, viewSpan: 32, totalSamples: 32, yMax: 100);
@@ -687,11 +687,9 @@ void main() {
         texW: 200,
         onFrameCanvas: false,
       ));
-      // Horizon receded to 26 again. B stays untouched (not stale; its
-      // empty plan reads as identity), A is y-drift-stale (100 vs 130) and
-      // narrow (75 px), so its refresh swallows B -- whose end is past the
-      // receded horizon. Pre-fix this baked [10, 32); the clamp caps it at
-      // 26, and B's [26, 32) tail becomes a horizon-zone vector draw.
+      // Horizon receded to 26 again. B is fresh; A is y-drift-stale and
+      // narrow (75 px), so it refreshes [10, 16) in place without absorbing
+      // B and losing B's [26, 32) texture to vector gap draws.
       expect(
         h.paint(
           viewStart: 10,
@@ -705,16 +703,22 @@ void main() {
       );
       expect(h.bakes.single, (
         start: 10,
-        end: 26,
-        texW: 200,
+        end: 16,
+        texW: 75,
         onFrameCanvas: false,
       ));
-      expect(h.gapDraws.single, (
-        start: 26,
-        end: 32,
-        texW: 75,
-        onFrameCanvas: true,
-      ));
+      expect(h.gapDraws, isEmpty);
+      expect(
+        h.paint(
+          viewStart: 10,
+          viewSpan: 32,
+          totalSamples: 32,
+          bakeHorizon: 26,
+          ghostKey: const ['k2'],
+          yMax: 130,
+        ),
+        isFalse,
+      );
     });
 
     test('a stale tile the receded horizon fully overtakes stops blitting '

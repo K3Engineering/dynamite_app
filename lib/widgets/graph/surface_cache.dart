@@ -7,5 +7,10 @@ class GraphSurfaceCache {
   final TileGraphCache tiles = TileGraphCache();
   final BlockReductionCache reductions = BlockReductionCache();
 
-  void dispose() => tiles.dispose();
+  void clear() {
+    tiles.clear();
+    reductions.clear();
+  }
+
+  void dispose() => clear();
 }

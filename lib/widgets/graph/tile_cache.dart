@@ -77,7 +77,7 @@ typedef DrawnBlit = ({TileMeta tile, Rect src, Rect dst, Rect clip});
 
 /// One gap render as handed to the canvas, for tests.
 @visibleForTesting
-typedef DrawnGap = ({int start, int end, double x, int texW, Rect clip});
+typedef DrawnGap = ({int start, int end, double x, Rect clip});
 
 /// Record [draw] and rasterize it into a [widthPx] x [heightPx] physical-pixel
 /// [ui.Image]. The canvas is pre-scaled by [dpr] so [draw] works in logical px.
@@ -112,6 +112,9 @@ class TileGraphCache {
     }
     _images.clear();
     _state = const CacheState();
+    _drawnBlits.clear();
+    _drawnGaps.clear();
+    _hasDrawnFrame = false;
   }
 
   void dispose() => clear();
@@ -123,11 +126,11 @@ class TileGraphCache {
   /// per drawn item and no list churn.
   @visibleForTesting
   ({List<DrawnBlit> blits, List<DrawnGap> gaps})? get debugLastRaster =>
-      _firstFrameDrawn ? null : (blits: _drawnBlits, gaps: _drawnGaps);
+      _hasDrawnFrame ? (blits: _drawnBlits, gaps: _drawnGaps) : null;
 
   final List<DrawnBlit> _drawnBlits = [];
   final List<DrawnGap> _drawnGaps = [];
-  bool _firstFrameDrawn = true;
+  bool _hasDrawnFrame = false;
 
   /// Recording exists for tests and is compiled out of release builds, so the
   /// per-draw record append costs nothing in the app.
@@ -175,7 +178,7 @@ class TileGraphCache {
     if (_kRecordRaster) {
       _drawnBlits.clear();
       _drawnGaps.clear();
-      _firstFrameDrawn = false;
+      _hasDrawnFrame = true;
     }
     _drawBlits(canvas, step.frame.blits);
     _drawGaps(canvas, step.frame.gaps, c);
@@ -229,7 +232,7 @@ class TileGraphCache {
     for (final b in blits) {
       final src = Rect.fromLTWH(0, 0, b.sw, b.sh);
       final dst = Rect.fromLTWH(b.dx, b.dy, b.dw, b.dh);
-      final clip = Rect.fromLTRB(b.clipL, b.clipB, b.clipR, b.clipT);
+      final clip = Rect.fromLTRB(b.clipL, b.clipT, b.clipR, b.clipB);
       canvas.save();
       canvas.clipRect(clip);
       canvas.drawImageRect(_images[b.tile.textureId]!, src, dst, paint);
@@ -243,20 +246,14 @@ class TileGraphCache {
   /// Vector-render the uncovered visible ranges (see the file header).
   void _drawGaps(Canvas canvas, List<GapRect> gaps, TileViewConfig c) {
     for (final g in gaps) {
-      final clip = Rect.fromLTRB(g.clipL, g.clipB, g.clipR, g.clipT);
+      final clip = Rect.fromLTRB(g.clipL, g.clipT, g.clipR, g.clipB);
       canvas.save();
       canvas.clipRect(clip);
       canvas.translate(g.x, 0);
       c.render(canvas, g.start, g.end);
       canvas.restore();
       if (_kRecordRaster) {
-        _drawnGaps.add((
-          start: g.start,
-          end: g.end,
-          x: g.x,
-          texW: g.texW,
-          clip: clip,
-        ));
+        _drawnGaps.add((start: g.start, end: g.end, x: g.x, clip: clip));
       }
     }
   }

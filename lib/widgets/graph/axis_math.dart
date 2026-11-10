@@ -39,6 +39,8 @@ typedef YAxisRange = ({
 });
 
 /// Snap a data range outward to a 1/2/5 tick grid in base display units.
+/// Bounds and [tickDelta] stay unscaled so [rung] flips affect labels only,
+/// never rescaling data or invalidating tiles.
 YAxisRange computeYAxisRange(
   double dataMin,
   double dataMax,

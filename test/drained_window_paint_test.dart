@@ -95,6 +95,15 @@ void main() {
     );
     await tester.pump();
     expect(tester.takeException(), isNull);
+    expect(find.text('LIVE'), findsOneWidget);
+
+    // A stream clear bumps generation without rebuilding GraphWorkspace's
+    // parent: the LIVE button must disappear when the viewport reconciles.
+    hub.clear();
+    feed(100);
+    await tester.pump();
+    expect(ctrl.isLive, isTrue);
+    expect(find.text('LIVE'), findsNothing);
 
     // Unmount before the test ends: the live-follow ticker must be disposed
     // before the binding's no-pending-timers check.

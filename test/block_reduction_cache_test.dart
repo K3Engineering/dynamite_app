@@ -174,5 +174,16 @@ void main() {
       reduce: runs(r2),
     );
     expect(reduces, 4);
+
+    // Explicit clear flushes even if the next prepare passes identical keys.
+    cache.clear();
+    cache.prepare(generation: 1, suppressKey: const ['u', 7], blockSize: 64);
+    cache.resolve(
+      channel: 0,
+      blockIndex: 100 + 8192,
+      complete: true,
+      reduce: runs(r2),
+    );
+    expect(reduces, 5);
   });
 }

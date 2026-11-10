@@ -29,6 +29,7 @@ int joinBlockEnd(int end, int blockSize) =>
 );
 
 /// Fixed-capacity vertex buffer with a continuous-primitive carryover tail.
+/// The 4096-float cap stays within the Skwasm/Emscripten per-draw stack limit.
 class VertexBatcher {
   new({
     required this.preserveFloats,
