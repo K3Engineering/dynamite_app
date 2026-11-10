@@ -159,6 +159,14 @@ void main() async {
     unawaited(linkManager.shutdownForHotRestart());
   });
 
+  // Physical profiling uses ?autoconnect to start the 1 kHz demo after startup.
+  // Live is already the initial tab; release and debug builds ignore the flag.
+  if (kProfileMode && Uri.base.queryParameters.containsKey('autoconnect')) {
+    Timer(const Duration(seconds: 1), () {
+      unawaited(linkManager.connectToDemoDevice());
+    });
+  }
+
   runApp(
     MultiProvider(
       providers: [
