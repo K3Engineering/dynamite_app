@@ -80,8 +80,8 @@ void main() {
       expect(writes[0].withoutResponse, isFalse);
       // 250 bytes at 100-byte chunks: 100 + 100 + 50.
       expect(writes.sublist(1, 4).map((w) => w.bytes.length), [100, 100, 50]);
-      expect(writes[1].bytes, image.sublist(0, 100));
-      expect(writes[3].bytes, image.sublist(200));
+      expect(writes[1].bytes.rangeEquals(0, 100, image), isTrue);
+      expect(writes[3].bytes.rangeEquals(0, 50, image, 200), isTrue);
       expect(writes[4].bytes.single, otaDoneOpcode);
       expect(writes[4].withoutResponse, isTrue);
       // Every chunk write was with-response (flow control); none of the
