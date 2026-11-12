@@ -373,6 +373,11 @@ class _ChannelStatsTableState extends State<ChannelStatsTable> {
 
 /// Rasterized digits and punctuation for one text style, tinted per draw.
 ///
+/// Source rectangles and replay origins are integer device coordinates, so
+/// [FilterQuality.none] copies glyphs instead of resampling them at unrelated
+/// subpixel phases. Fractional advances still determine the original cursor;
+/// only its replay position is quantized.
+///
 /// The inventory is the closed set the formatters can emit ([DisplayUnit]
 /// writes a sign, digits, and a decimal point; the table adds '--' for an
 /// inactive channel and '-' for an unavailable value). A character outside it
@@ -419,7 +424,8 @@ class _GlyphAtlas {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder)..scale(dpr);
     final glyphs = List<_Glyph?>.filled(128, null);
-    var x = 0.0;
+    var x = 0;
+    final imageHeight = (lineHeight * dpr).ceil();
     for (final ch in _inventory.split('')) {
       final tp = TextPainter(
         text: TextSpan(text: ch, style: mask),
@@ -427,18 +433,21 @@ class _GlyphAtlas {
         textDirection: .ltr,
         maxLines: 1,
       )..layout();
-      tp.paint(canvas, Offset(x, 0));
+      final width = (tp.width * dpr).ceil();
+      tp.paint(canvas, Offset(x / dpr, 0));
       glyphs[ch.codeUnitAt(0)] = _Glyph(
-        src: Rect.fromLTRB(x * dpr, 0, (x + tp.width) * dpr, lineHeight * dpr),
+        src: Rect.fromLTWH(
+          x.toDouble(),
+          0,
+          width.toDouble(),
+          imageHeight.toDouble(),
+        ),
         advance: tp.width,
       );
-      x += tp.width;
+      x += width;
     }
     final picture = recorder.endRecording();
-    final image = picture.toImageSync(
-      (x * dpr).ceil(),
-      (lineHeight * dpr).ceil(),
-    );
+    final image = picture.toImageSync(x, imageHeight);
     picture.dispose();
     return _GlyphAtlas._(
       image: image,
@@ -487,11 +496,15 @@ class ChannelStatsCellPainter extends CustomPainter {
       // drawAtlas normalizes each src rect to the origin before applying the
       // RSTransform (empirical on CanvasKit and VM — the dart:ui docs don't
       // spell this out), so tx is just the cursor; subtracting src.left
-      // would shift every glyph left by its atlas position.
-      _transforms.add(ui.RSTransform(1 / _atlas.dpr, 0, x, 0));
+      // would shift every glyph left by its atlas position. Integer device
+      // translation makes replay a copy of the integer-aligned atlas glyph.
+      final glyphX = (x * _atlas.dpr).roundToDouble() / _atlas.dpr;
+      _transforms.add(ui.RSTransform(1 / _atlas.dpr, 0, glyphX, 0));
       _colors.add(color);
       x += glyph.advance;
     }
+    // Keep the unquantized advance for stable right alignment; quantization
+    // changes glyph positions, not the cell's measured width.
     _width = x;
   }
 
@@ -499,6 +512,9 @@ class ChannelStatsCellPainter extends CustomPainter {
   static const double _padding = 1;
 
   static final Paint _paint = Paint()..filterQuality = .none;
+
+  static double _snap(double value, double scale, double translation) =>
+      ((value * scale + translation).roundToDouble() - translation) / scale;
 
   final _GlyphAtlas _atlas;
 
@@ -513,10 +529,20 @@ class ChannelStatsCellPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final dpr = _atlas.dpr;
-    final x = ((size.width - _padding - _width) * dpr).roundToDouble() / dpr;
-    final y =
-        (((size.height - _atlas.lineHeight) / 2) * dpr).roundToDouble() / dpr;
+    // The widget's local origin can itself be fractional (Expanded columns,
+    // in particular). Snap in device space, not just in local coordinates;
+    // otherwise every glyph retains the parent transform's residual phase.
+    final transform = canvas.getTransform();
+    final x = _snap(
+      size.width - _padding - _width,
+      transform[0],
+      transform[12],
+    );
+    final y = _snap(
+      (size.height - _atlas.lineHeight) / 2,
+      transform[5],
+      transform[13],
+    );
     canvas.save();
     canvas.clipRect(Offset.zero & size, doAntiAlias: false);
     canvas.translate(x, y);
