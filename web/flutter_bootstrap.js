@@ -1,5 +1,5 @@
-{ { flutter_js } }
-{ { flutter_build_config } }
+{{flutter_js}}
+{{flutter_build_config}}
 
 function startEngine() {
   // Updates the index.html splash through the load stages. no
