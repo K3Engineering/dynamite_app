@@ -270,7 +270,10 @@ void main() {
       find.widgetWithText(ListTile, 'Board calibration'),
     );
     expect(row.onTap, isNotNull);
-    await tester.tap(find.widgetWithText(ListTile, 'Board calibration'));
+    final rowFinder = find.widgetWithText(ListTile, 'Board calibration');
+    await tester.ensureVisible(rowFinder);
+    await tester.pumpAndSettle();
+    await tester.tap(rowFinder);
     await tester.pumpAndSettle();
     expect(find.textContaining('board constants: bad exc'), findsOneWidget);
 
