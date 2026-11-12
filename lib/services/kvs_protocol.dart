@@ -188,13 +188,9 @@ KvsResponse? parseKvsResponse(String request, Uint8List frame) {
   return exact ? KvsResponse(status: status, payload: '') : null;
 }
 
-bool _bytesAt(Uint8List frame, int offset, List<int> bytes) {
-  if (frame.length < offset + bytes.length) return false;
-  for (var i = 0; i < bytes.length; ++i) {
-    if (frame[offset + i] != bytes[i]) return false;
-  }
-  return true;
-}
+bool _bytesAt(Uint8List frame, int offset, Uint8List bytes) =>
+    frame.length >= offset + bytes.length &&
+    frame.rangeEquals(offset, offset + bytes.length, bytes);
 
 /// Parse an IDX payload (`key=typeHex`) into its entry. A key can never
 /// contain '=' (SET splits at the first one), so the type rides after the
