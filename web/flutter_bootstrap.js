@@ -14,6 +14,12 @@ function startEngine() {
       // it from here instead. Consumed by the loader itself, not forwarded to
       // initializeEngine.
       canvasKitBaseUrl: 'canvaskit',
+      wasmAllowList: {
+        // TODO remove when these become default
+        blink: true,
+        webkit: true,
+        gecko: true,
+      },
     },
     onEntrypointLoaded: async function (engineInitializer) {
       const status = document.getElementById('status');
@@ -44,7 +50,7 @@ window.addEventListener(
 // to the tab and auto-releases on close or crash, so a dead holder can
 // never lock the app out — no heartbeats, no steal, no queue state to
 // clean up.
-const holdForever = () => new Promise(() => {});
+const holdForever = () => new Promise(() => { });
 
 // Fail loud: a broken lock request means the cross-tab guard state is
 // unknown, and booting unprotected risks two tabs mutating the same OPFS

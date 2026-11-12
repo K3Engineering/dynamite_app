@@ -350,9 +350,10 @@ sealed class ChannelBoardCalibration {
     }
     // One half of the pair, or values failing the joint validity check,
     // can only be a damaged snapshot — never a partial instrument.
-    if (resistors == null ||
-        readings == null ||
-        !channelDataIsValid(resistors, readings)) {
+    final channelDataValid = resistors != null && readings != null
+        ? channelDataIsValid(resistors, readings)
+        : false;
+    if (!channelDataValid) {
       throw const FormatException('board calibration: invalid channel data');
     }
     return CalibratedChannelBoard(
@@ -612,9 +613,10 @@ CalGroup? parseCalGroup(Map<String, String> kv, CalNamespace namespace) {
       kCalPointCount,
       'ch$i.raw',
     );
-    if (resistors == null ||
-        readings == null ||
-        !ChannelBoardCalibration.channelDataIsValid(resistors, readings)) {
+    final channelDataValid = resistors != null && readings != null
+        ? ChannelBoardCalibration.channelDataIsValid(resistors, readings)
+        : false;
+    if (!channelDataValid) {
       throw FormatException('calibration: invalid channel data (ch$i)');
     }
     channelData.add((resistors: resistors, readings: readings));

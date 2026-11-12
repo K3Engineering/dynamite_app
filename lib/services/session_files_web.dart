@@ -174,10 +174,7 @@ class _JsSinkWorkerHandle implements SinkWorkerHandle {
     if (result.typeofEquals('number')) return (result as JSNumber).toDartInt;
     if (result.typeofEquals('boolean')) return (result as JSBoolean).toDart;
     if (result.typeofEquals('object')) {
-      return [
-        for (var i = 0, arr = result as JSArray; i < arr.length; i++)
-          (arr[i]! as JSString).toDart,
-      ];
+      return (result as JSArray<JSString>).toDartStringList;
     }
     return null;
   }
