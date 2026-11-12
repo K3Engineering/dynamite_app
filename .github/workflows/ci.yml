@@ -86,6 +86,8 @@ jobs:
               artifact: build/ios/iphoneos/Runner.app }
           - { platform: android, os: ubuntu-latest,  cmd: "flutter build apk --release --build-number=$GITHUB_RUN_NUMBER",
               artifact: build/app/outputs/apk/release/app-release.apk }
+          - { platform: web,     os: ubuntu-latest,  cmd: "flutter build web --wasm --release --no-deprecated-js-interop",
+              artifact: build/web }
     steps:
       - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
