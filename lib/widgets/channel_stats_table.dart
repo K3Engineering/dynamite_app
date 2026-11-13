@@ -1,5 +1,3 @@
-import 'dart:ui' as ui;
-
 import 'package:material_ui/material_ui.dart';
 
 import '../models/display_unit.dart';
@@ -31,12 +29,11 @@ class ChannelStatsRow {
 
 /// Per-channel stats grid.
 ///
-/// The value cells are composed from a glyph atlas instead of `Text` widgets:
-/// this table rebuilds on every packet, and the per-cell paragraph shaping a
-/// `Text`/`Table` build does measured at 7.7-9.6 ms per call under an 8x CPU
-/// throttle on web. Static text — row labels, the channel header, the unit
-/// caption, the clipping icon — stays as widgets, since it only lays out when
-/// configuration changes.
+/// Value cells are painted from cached single-character paragraphs instead of
+/// `Text` widgets: the whole `Text`/`Table` layout measured at 7.7-9.6 ms per
+/// call under an 8x CPU throttle on web. Paragraphs are laid out for the fixed
+/// numeric character inventory when text configuration changes, never when a
+/// number changes. Static labels and headers remain widgets.
 ///
 /// Value rows sit behind a [RepaintBoundary] so only the row whose digits
 /// changed re-records; the rest are blitted from their retained layer.
@@ -95,9 +92,9 @@ typedef _Grid = ({
 });
 
 class _ChannelStatsTableState extends State<ChannelStatsTable> {
-  _GlyphAtlas? _monoAtlas;
-  _GlyphAtlas? _emphAtlas;
-  Object? _atlasKey;
+  _GlyphFont? _monoFont;
+  _GlyphFont? _emphFont;
+  Object? _fontKey;
 
   double? _col0Width;
   Object? _col0Key;
@@ -105,13 +102,13 @@ class _ChannelStatsTableState extends State<ChannelStatsTable> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _ensureAtlases();
+    _ensureFonts();
   }
 
   @override
   void dispose() {
-    _monoAtlas?.dispose();
-    _emphAtlas?.dispose();
+    _monoFont?.dispose();
+    _emphFont?.dispose();
     super.dispose();
   }
 
@@ -131,25 +128,33 @@ class _ChannelStatsTableState extends State<ChannelStatsTable> {
     );
   }
 
-  void _ensureAtlases() {
+  void _ensureFonts() {
     final styles = _styles(context);
     final textScaler = MediaQuery.textScalerOf(context);
-    final dpr = MediaQuery.devicePixelRatioOf(context);
-    final key = (styles.mono, styles.emph, textScaler, dpr);
-    if (key == _atlasKey) return;
-    _monoAtlas?.dispose();
-    _emphAtlas?.dispose();
-    _monoAtlas = _GlyphAtlas.build(
+    final scheme = Theme.of(context).colorScheme;
+    final key = (
+      styles.mono,
+      styles.emph,
+      textScaler,
+      scheme.onSurface,
+      scheme.outline,
+    );
+    if (key == _fontKey) return;
+    _monoFont?.dispose();
+    _emphFont?.dispose();
+    _monoFont = _GlyphFont.build(
       style: styles.mono,
       textScaler: textScaler,
-      dpr: dpr,
+      fallbackNormalColor: scheme.onSurface,
+      staleColor: scheme.outline,
     );
-    _emphAtlas = _GlyphAtlas.build(
+    _emphFont = _GlyphFont.build(
       style: styles.emph,
       textScaler: textScaler,
-      dpr: dpr,
+      fallbackNormalColor: scheme.onSurface,
+      staleColor: scheme.outline,
     );
-    _atlasKey = key;
+    _fontKey = key;
   }
 
   /// Leading column width = widest row label at [labelStyle]. Measured with a
@@ -189,8 +194,8 @@ class _ChannelStatsTableState extends State<ChannelStatsTable> {
       onSurface: scheme.onSurface,
     );
     final styles = _styles(context);
-    final monoAtlas = _monoAtlas!;
-    final emphAtlas = _emphAtlas!;
+    final monoFont = _monoFont!;
+    final emphFont = _emphFont!;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -218,7 +223,7 @@ class _ChannelStatsTableState extends State<ChannelStatsTable> {
                   row,
                   grid: grid,
                   baseStyle: row.emphasized ? styles.emph : styles.mono,
-                  atlas: row.emphasized ? emphAtlas : monoAtlas,
+                  font: row.emphasized ? emphFont : monoFont,
                 ),
             ],
           ),
@@ -296,10 +301,10 @@ class _ChannelStatsTableState extends State<ChannelStatsTable> {
     ChannelStatsRow row, {
     required _Grid grid,
     required TextStyle baseStyle,
-    required _GlyphAtlas atlas,
+    required _GlyphFont font,
   }) {
     // 1px vertical padding around the line, as the old table cells had.
-    final rowHeight = atlas.lineHeight + 2;
+    final rowHeight = font.lineHeight + 2;
     return SizedBox(
       height: rowHeight,
       child: Row(
@@ -324,7 +329,7 @@ class _ChannelStatsTableState extends State<ChannelStatsTable> {
                         value: row.values[i],
                         active: widget.activeChannels[i],
                         stale: row.stale,
-                        atlas: atlas,
+                        font: font,
                         baseStyle: baseStyle,
                         grid: grid,
                       ),
@@ -343,7 +348,7 @@ class _ChannelStatsTableState extends State<ChannelStatsTable> {
     required double? value,
     required bool active,
     required bool stale,
-    required _GlyphAtlas atlas,
+    required _GlyphFont font,
     required TextStyle baseStyle,
     required _Grid grid,
   }) {
@@ -362,209 +367,147 @@ class _ChannelStatsTableState extends State<ChannelStatsTable> {
       valueText: text,
       child: CustomPaint(
         painter: ChannelStatsCellPainter._(
-          atlas: atlas,
+          glyphs: font.forColor(color),
           text: text,
-          color: color,
         ),
       ),
     );
   }
 }
 
-/// Rasterized digits and punctuation for one text style, tinted per draw.
-///
-/// Source rectangles and replay origins are integer device coordinates, so
-/// [FilterQuality.none] copies glyphs instead of resampling them at unrelated
-/// subpixel phases. Fractional advances still determine the original cursor;
-/// only its replay position is quantized.
-///
-/// The inventory is the closed set the formatters can emit ([DisplayUnit]
-/// writes a sign, digits, and a decimal point; the table adds '--' for an
-/// inactive channel and '-' for an unavailable value). A character outside it
-/// means a formatter changed; that is a bug, so [glyph] throws.
-class _GlyphAtlas {
-  new _({
-    required this.image,
-    required this.glyphs,
-    required this.lineHeight,
-    required this.dpr,
-  });
+/// The numeric character inventory for one base style, in every color used by
+/// the table. Preparing every variant avoids a first-use layout when a row
+/// becomes stale or a channel is toggled.
+class _GlyphFont {
+  new _({required this.variants, required this.lineHeight});
+
+  final Map<Color, _GlyphSet> variants;
+  final double lineHeight;
+
+  static _GlyphFont build({
+    required TextStyle style,
+    required TextScaler textScaler,
+    required Color fallbackNormalColor,
+    required Color staleColor,
+  }) {
+    final normalColor = style.color ?? fallbackNormalColor;
+    final variants = <Color, _GlyphSet>{};
+    for (final color in {
+      normalColor,
+      staleColor,
+      staleColor.withValues(alpha: 0.4),
+    }) {
+      variants[color] = _GlyphSet.build(
+        style: style.copyWith(color: color),
+        textScaler: textScaler,
+      );
+    }
+    return _GlyphFont._(
+      variants: variants,
+      lineHeight: variants[normalColor]!.lineHeight,
+    );
+  }
+
+  _GlyphSet forColor(Color color) => variants[color]!;
+
+  void dispose() {
+    for (final glyphs in variants.values) {
+      glyphs.dispose();
+    }
+  }
+}
+
+/// Native paragraphs for the closed set of characters emitted by
+/// [DisplayUnit], plus the table's '-' and '--' placeholders. Isolating a
+/// character is valid for this numeric font: tabular figures have fixed
+/// advances, and these characters do not form ligatures.
+class _GlyphSet {
+  new _({required this.glyphs, required this.lineHeight});
 
   static const String _inventory = '0123456789.+-';
 
-  final ui.Image image;
-
   /// Indexed by code unit; null for a character not in [_inventory].
-  final List<_Glyph?> glyphs;
-
-  /// Line height of the source style, in logical pixels.
+  final List<TextPainter?> glyphs;
   final double lineHeight;
 
-  /// Device pixel ratio the atlas was rasterized at; draw-time scaling is
-  /// `1 / dpr`.
-  final double dpr;
-
-  static _GlyphAtlas build({
+  static _GlyphSet build({
     required TextStyle style,
     required TextScaler textScaler,
-    required double dpr,
   }) {
-    // A pure coverage mask: [ChannelStatsCellPainter] tints with dstIn, which
-    // takes only the atlas alpha and replaces its RGB, so the glyphs are baked
-    // opaque-white regardless of the style's color.
-    final mask = style.copyWith(color: Colors.white);
-    final probe = TextPainter(
-      text: TextSpan(text: '0', style: mask),
-      textScaler: textScaler,
-      textDirection: .ltr,
-      maxLines: 1,
-    )..layout();
-    final lineHeight = probe.height;
-
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder)..scale(dpr);
-    final glyphs = List<_Glyph?>.filled(128, null);
-    var x = 0;
-    final imageHeight = (lineHeight * dpr).ceil();
+    final glyphs = List<TextPainter?>.filled(128, null);
     for (final ch in _inventory.split('')) {
-      final tp = TextPainter(
-        text: TextSpan(text: ch, style: mask),
+      glyphs[ch.codeUnitAt(0)] = TextPainter(
+        text: TextSpan(text: ch, style: style),
         textScaler: textScaler,
         textDirection: .ltr,
         maxLines: 1,
       )..layout();
-      final width = (tp.width * dpr).ceil();
-      tp.paint(canvas, Offset(x / dpr, 0));
-      glyphs[ch.codeUnitAt(0)] = _Glyph(
-        src: Rect.fromLTWH(
-          x.toDouble(),
-          0,
-          width.toDouble(),
-          imageHeight.toDouble(),
-        ),
-        advance: tp.width,
-      );
-      x += width;
     }
-    final picture = recorder.endRecording();
-    final image = picture.toImageSync(x, imageHeight);
-    picture.dispose();
-    return _GlyphAtlas._(
-      image: image,
+    return _GlyphSet._(
       glyphs: glyphs,
-      lineHeight: lineHeight,
-      dpr: dpr,
+      lineHeight: glyphs['0'.codeUnitAt(0)]!.height,
     );
   }
 
-  _Glyph glyph(int codeUnit) {
+  TextPainter glyph(int codeUnit) {
     final glyph = codeUnit < glyphs.length ? glyphs[codeUnit] : null;
     if (glyph == null) {
       throw StateError(
-        'stats-table glyph atlas has no glyph for '
+        'stats-table character cache has no glyph for '
         'U+${codeUnit.toRadixString(16).toUpperCase()}',
       );
     }
     return glyph;
   }
 
-  void dispose() => image.dispose();
+  void dispose() {
+    for (final glyph in glyphs) {
+      glyph?.dispose();
+    }
+  }
 }
 
-@immutable
-class _Glyph {
-  const new({required this.src, required this.advance});
-
-  /// Source rectangle in the atlas image (physical pixels).
-  final Rect src;
-
-  /// Advance width in logical pixels.
-  final double advance;
-}
-
-/// Paints one channel's value by blitting atlas glyphs, right-aligned. No
-/// paragraph is laid out or recorded here.
+/// Paints one channel's value with cached character paragraphs, right-aligned.
+/// Values require no paragraph layout after [_GlyphFont.build].
 ///
 /// Public so widget tests can assert the painted text (the values are no
 /// longer `Text` widgets).
 class ChannelStatsCellPainter extends CustomPainter {
-  new _({required this._atlas, required this.text, required this.color}) {
-    var x = 0.0;
+  new _({required _GlyphSet glyphs, required this.text}) : _glyphs = glyphs {
+    var width = 0.0;
     for (final codeUnit in text.codeUnits) {
-      final glyph = _atlas.glyph(codeUnit);
-      _rects.add(glyph.src);
-      // drawAtlas normalizes each src rect to the origin before applying the
-      // RSTransform (empirical on CanvasKit and VM — the dart:ui docs don't
-      // spell this out), so tx is just the cursor; subtracting src.left
-      // would shift every glyph left by its atlas position. Integer device
-      // translation makes replay a copy of the integer-aligned atlas glyph.
-      final glyphX = (x * _atlas.dpr).roundToDouble() / _atlas.dpr;
-      _transforms.add(ui.RSTransform(1 / _atlas.dpr, 0, glyphX, 0));
-      _colors.add(color);
-      x += glyph.advance;
+      final glyph = glyphs.glyph(codeUnit);
+      _characters.add(glyph);
+      width += glyph.width;
     }
-    // Keep the unquantized advance for stable right alignment; quantization
-    // changes glyph positions, not the cell's measured width.
-    _width = x;
+    _width = width;
   }
 
-  /// Cell padding, matching the old value cells.
   static const double _padding = 1;
 
-  static final Paint _paint = Paint()..filterQuality = .none;
-
-  static double _snap(double value, double scale, double translation) =>
-      ((value * scale + translation).roundToDouble() - translation) / scale;
-
-  final _GlyphAtlas _atlas;
+  final _GlyphSet _glyphs;
+  final List<TextPainter> _characters = [];
+  double _width = 0;
 
   /// The formatted value shown in the cell.
   final String text;
-  final Color color;
-
-  final List<ui.RSTransform> _transforms = [];
-  final List<Rect> _rects = [];
-  final List<Color> _colors = [];
-  double _width = 0;
 
   @override
   void paint(Canvas canvas, Size size) {
-    // The widget's local origin can itself be fractional (Expanded columns,
-    // in particular). Snap in device space, not just in local coordinates;
-    // otherwise every glyph retains the parent transform's residual phase.
-    final transform = canvas.getTransform();
-    final x = _snap(
-      size.width - _padding - _width,
-      transform[0],
-      transform[12],
-    );
-    final y = _snap(
-      (size.height - _atlas.lineHeight) / 2,
-      transform[5],
-      transform[13],
-    );
+    var x = size.width - _padding - _width;
+    final y = (size.height - _glyphs.lineHeight) / 2;
     canvas.save();
     canvas.clipRect(Offset.zero & size, doAntiAlias: false);
-    canvas.translate(x, y);
-    // dstIn: the atlas part is the source, the color the destination, so the
-    // result is [color] shaped by the glyph's alpha.
-    canvas.drawAtlas(
-      _atlas.image,
-      _transforms,
-      _rects,
-      _colors,
-      .dstIn,
-      null,
-      _paint,
-    );
+    for (final character in _characters) {
+      character.paint(canvas, Offset(x, y));
+      x += character.width;
+    }
     canvas.restore();
   }
 
   @override
   bool shouldRepaint(ChannelStatsCellPainter oldDelegate) =>
-      oldDelegate.text != text ||
-      oldDelegate.color != color ||
-      oldDelegate._atlas != _atlas;
+      oldDelegate.text != text || oldDelegate._glyphs != _glyphs;
 }
 
 /// ADC-rail warning icon: snaps on at the first clipped sample and fades out
