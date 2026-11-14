@@ -7,6 +7,7 @@ import '../models/device_flash.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
+import 'session_preparation.dart';
 
 /// Loaded session data for playback/review.
 class SessionData implements GraphDataSource {
@@ -43,7 +44,7 @@ class SessionData implements GraphDataSource {
   /// Per-channel whole-session extremes, derived by the load-time ingest
   /// (same [ChannelIngest] tracker as the live hub's stream-lifetime
   /// peaks); null per channel on an empty session.
-  late final List<(double, double)?> _extremes;
+  final List<(double, double)?> _extremes;
 
   /// Per-channel bucket aggregates over [bucketSize]-sample windows of the
   /// raw values. Mirrors DataHub's live buckets (same [BucketAccumulator])
@@ -51,64 +52,52 @@ class SessionData implements GraphDataSource {
   /// real value, so buckets are always fully populated and need no
   /// missing-data handling.
   final int bucketSize = kBucketSize;
-  late final List<BucketAccumulator> _valueBuckets;
+  final List<BucketAccumulator> _valueBuckets;
 
   /// Per-channel bucket aggregates of the first-difference series
   /// (`diff[i] = raw[i] - raw[i-1]`), same bucket grid. Used by the
   /// derivative graph's bucket fast path; the gap/first-sample diff rule
   /// lives in [ingestDiff], applied through the same [ChannelIngest] the
   /// live hub uses.
-  late final List<BucketAccumulator> _diffBuckets;
+  final List<BucketAccumulator> _diffBuckets;
 
+  /// Prepare a session from callers that already hold decoded channel arrays.
+  /// The recording store instead uses [fromPrepared] after its fused decoder.
   new({
-    required this.channels,
+    required List<Int32List> channels,
+    required int sampleRate,
+    required List<ChannelCalibration> calibrations,
+    required List<double?> tares,
+    required int ssnOrigin,
+    KvsSnapshot? deviceKvs,
+    GapList? gaps,
+  }) : this.fromPrepared(
+         prepared: prepareSessionChannels(
+           channels: channels,
+           calibrations: calibrations,
+           gaps: gaps ?? GapList(),
+         ),
+         sampleRate: sampleRate,
+         tares: tares,
+         ssnOrigin: ssnOrigin,
+         deviceKvs: deviceKvs,
+       );
+
+  /// Assemble the graph source after [decodeAndPrepareSession] has built its
+  /// channel-derived state. This constructor deliberately does no sample work.
+  new fromPrepared({
+    required PreparedSessionData prepared,
     required this.sampleRate,
-    required this.sampleCount,
-    required this.calibrations,
     required this.tares,
     required this.ssnOrigin,
     this.deviceKvs,
-    GapList? gaps,
-  }) : gaps = gaps ?? GapList(),
-       _extremes = List.filled(channels.length, null) {
-    final int numBuckets = (sampleCount == 0)
-        ? 0
-        : ((sampleCount - 1) ~/ bucketSize) + 1;
-    _valueBuckets = List.generate(
-      channels.length,
-      // mV/V sums from the session's recorded calibration snapshot
-      // (immutable per session, so no disarm handling is needed) for exact
-      // bucket means; see BucketSeries.sumMvV. Board-less channels bucket
-      // raw-only.
-      (i) => BucketAccumulator(
-        bucketSize: bucketSize,
-        numBuckets: numBuckets,
-        mvVOf: switch (calibrations[i].board) {
-          final board? => (raw) => board.mvVFromRaw(raw.toDouble()),
-          null => null,
-        },
-      ),
-    );
-    _diffBuckets = List.generate(
-      channels.length,
-      (_) => BucketAccumulator(bucketSize: bucketSize, numBuckets: numBuckets),
-    );
-
-    for (int ch = 0; ch < channels.length; ch++) {
-      if (sampleCount == 0) continue;
-      final ingest = ChannelIngest(
-        valueBuckets: _valueBuckets[ch],
-        diffBuckets: _diffBuckets[ch],
-        gaps: this.gaps,
-      );
-
-      for (int i = 0; i < sampleCount; i++) {
-        ingest.add(i, channels[ch][i], i > 0 ? channels[ch][i - 1] : 0);
-      }
-      final ext = ingest.extremes; // non-null: sampleCount > 0 here
-      _extremes[ch] = (ext!.$1.toDouble(), ext.$2.toDouble());
-    }
-  }
+  }) : channels = prepared.channels,
+       calibrations = prepared.calibrations,
+       sampleCount = prepared.sampleCount,
+       gaps = prepared.gaps,
+       _extremes = prepared.extremes,
+       _valueBuckets = prepared.valueBuckets,
+       _diffBuckets = prepared.diffBuckets;
 
   // -- GraphDataSource --------------------------------------------------------
 

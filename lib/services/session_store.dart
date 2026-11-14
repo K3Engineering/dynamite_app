@@ -12,6 +12,7 @@ import 'session_data.dart';
 import 'session_files.dart';
 import 'session_id.dart';
 import 'session_journal.dart';
+import 'session_preparation.dart';
 import 'session_store_backend.dart';
 
 /// The per-session file store: the catalog cache and serialized operation
@@ -379,14 +380,15 @@ class SessionStore {
     if (data == null) {
       throw StateError('loadSession: no data for session $id');
     }
-    final decoded = SessionChunkCodec(meta.channelCount).decodeWithGaps(data);
-    return SessionData(
-      channels: decoded.channels,
-      sampleRate: meta.sampleRate,
-      sampleCount: decoded.channels.first.length,
+    final prepared = decodeAndPrepareSession(
+      codec: SessionChunkCodec(meta.channelCount),
+      bytes: data,
       calibrations: meta.calibration,
+    );
+    return SessionData.fromPrepared(
+      prepared: prepared,
+      sampleRate: meta.sampleRate,
       tares: meta.tares,
-      gaps: decoded.gaps,
       ssnOrigin: meta.ssnOrigin,
       deviceKvs: meta.deviceKvs,
     );

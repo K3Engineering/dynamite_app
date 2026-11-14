@@ -8,7 +8,35 @@ import 'package:dynamite_app/models/channel_calibration.dart';
 import 'package:dynamite_app/models/gap_list.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/data_hub.dart';
+import 'package:dynamite_app/services/live_session_writer.dart';
 import 'package:dynamite_app/services/session_data.dart';
+import 'package:dynamite_app/services/session_preparation.dart';
+
+/// Round-trip channel storage through data.raw so this tests the same fused
+/// preparation path used when the application opens a recording.
+SessionData replaySession({
+  required List<Int32List> channels,
+  required GapList gaps,
+  required int sampleRate,
+}) {
+  final count = channels.first.length;
+  final codec = SessionChunkCodec(channels.length);
+  final bytes = codec.pack(count, (s, ch) => channels[ch][s]);
+  codec.fillGapSentinels(bytes, gaps.rangesIn(0, count));
+  return SessionData.fromPrepared(
+    prepared: decodeAndPrepareSession(
+      codec: codec,
+      bytes: bytes,
+      calibrations: List.filled(
+        channels.length,
+        const ChannelCalibration(board: null),
+      ),
+    ),
+    sampleRate: sampleRate,
+    tares: List.filled(channels.length, 0.0),
+    ssnOrigin: 0,
+  );
+}
 
 /// Locks the live/session ingest mirror: DataHub's streaming ingest and
 /// SessionData's load-time pass must produce byte-identical value and diff
@@ -92,6 +120,33 @@ void main() {
       acc.add(0, -3); // would assert if ingest were not restarted
       expect(acc.series.samples, 1);
       expect(acc.series.mins[0], -3);
+    });
+
+    test('reset restarts the cursor mid-bucket and after wrapping', () {
+      for (final resetAfter in [2, 3, 6, 7]) {
+        final acc = BucketAccumulator(bucketSize: 3, numBuckets: 2);
+        for (int i = 0; i < resetAfter; i++) {
+          acc.add(i, 100 + i);
+        }
+        acc.reset();
+        final values = [4, -2, 9, 9, 1];
+        for (int i = 0; i < values.length; i++) {
+          acc.add(i, values[i]);
+        }
+
+        final series = acc.series;
+        expect(
+          series.samples,
+          values.length,
+          reason: 'reset after $resetAfter',
+        );
+        expect(series.mins[0], -2, reason: 'reset after $resetAfter');
+        expect(series.maxs[0], 9, reason: 'reset after $resetAfter');
+        expect(series.sums[0], 11, reason: 'reset after $resetAfter');
+        expect(series.mins[1], 1, reason: 'reset after $resetAfter');
+        expect(series.maxs[1], 9, reason: 'reset after $resetAfter');
+        expect(series.sums[1], 10, reason: 'reset after $resetAfter');
+      }
     });
   });
 
@@ -211,17 +266,10 @@ void main() {
       }
       expect(hub.totalSamples, n);
 
-      final sess = SessionData(
+      final sess = replaySession(
         channels: recorded,
+        gaps: hub.gaps,
         sampleRate: hub.sampleRateHz,
-        sampleCount: n,
-        calibrations: [
-          for (int ch = 0; ch < channels; ch++)
-            const ChannelCalibration(board: null),
-        ],
-        tares: List.filled(channels, 0.0),
-        ssnOrigin: 0,
-        gaps: GapList.fromJson(hub.gaps.toJson()),
       );
 
       final int sessBuckets = ((n - 1) ~/ sess.bucketSize) + 1;
@@ -290,17 +338,10 @@ void main() {
         line.fillRange(200, n, 5000);
         return line;
       });
-      final sess = SessionData(
+      final sess = replaySession(
         channels: recorded,
+        gaps: hub.gaps,
         sampleRate: hub.sampleRateHz,
-        sampleCount: n,
-        calibrations: [
-          for (int ch = 0; ch < channels; ch++)
-            const ChannelCalibration(board: null),
-        ],
-        tares: List.filled(channels, 0.0),
-        ssnOrigin: 0,
-        gaps: GapList.fromJson(hub.gaps.toJson()),
       );
 
       // Constant segments + suppressed gap-exit diff => every diff bucket is

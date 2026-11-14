@@ -120,7 +120,6 @@ void main() {
         for (int ch = 0; ch < channels; ch++) Int32List.fromList(values),
       ],
       sampleRate: 1000,
-      sampleCount: values.length,
       calibrations: nominalCals(),
       tares: List.filled(channels, 0.0),
       ssnOrigin: 0,
