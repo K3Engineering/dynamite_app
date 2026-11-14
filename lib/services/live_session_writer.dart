@@ -1,14 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:meta/meta.dart';
 
 import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
 import '../models/device_flash.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
-import '../models/gap_list.dart';
 import '../models/sample_slice.dart';
 import '../utils/future_chain.dart';
 import 'session_journal.dart';
@@ -33,8 +31,8 @@ class SessionChunkCodec {
   /// Byte length of one packed sample frame.
   int get frameBytes => channelCount * 4;
 
-  /// Whole sample frames in [bytes]. Callers decide what trailing partial
-  /// bytes mean; [decodeWithGaps] rejects them as a torn write.
+  /// Whole sample frames in [bytes]. The recording loader rejects a trailing
+  /// partial frame as a torn write.
   int framesOf(Uint8List bytes) => bytes.lengthInBytes ~/ frameBytes;
 
   /// Pack [frames] samples as sample-major little-endian int32. [valueAt]
@@ -81,62 +79,6 @@ class SessionChunkCodec {
         }
       }
     }
-  }
-
-  /// Decode [bytes] into per-channel arrays, turning sentinel frames into a
-  /// [GapList] and hold-filling with the previous real value. [bytes] must
-  /// divide into whole frames; a mixed/sentinel-first/out-of-range frame throws
-  /// (states the write path never produces).
-  @useResult
-  ({List<Int32List> channels, GapList gaps}) decodeWithGaps(Uint8List bytes) {
-    if (bytes.lengthInBytes % frameBytes != 0) {
-      throw StateError(
-        '${bytes.lengthInBytes} data bytes do not divide into whole '
-        '$frameBytes-byte frames — a torn mid-frame write is damage, '
-        'not a shorter recording',
-      );
-    }
-    final view = ByteData.sublistView(bytes);
-    final frames = framesOf(bytes);
-    final channels = List.generate(channelCount, (_) => Int32List(frames));
-    final gaps = GapList();
-    for (int s = 0; s < frames; s++) {
-      final base = s * channelCount * 4;
-      bool isGap = false;
-      for (int ch = 0; ch < channelCount; ch++) {
-        final raw = view.getInt32(base + ch * 4, Endian.little);
-        final hereGap = raw == gapSentinel;
-        if (ch > 0 && hereGap != isGap) {
-          throw StateError(
-            'frame $s mixes sentinel and real channel values — '
-            'the write path fills gap frames whole',
-          );
-        }
-        isGap = hereGap;
-        if (!isGap) {
-          if (raw < minAdcValue || raw > maxAdcValue) {
-            throw StateError(
-              'frame $s channel $ch holds $raw, outside the 24-bit ADC '
-              'range — the encoder never emits one, so this is a corrupt '
-              'file, not a measurement',
-            );
-          }
-          channels[ch][s] = raw;
-        }
-      }
-      if (isGap) {
-        if (s == 0) {
-          throw StateError(
-            'frame 0 is a gap frame — a session never starts mid-gap',
-          );
-        }
-        gaps.append(s, s + 1);
-        for (int ch = 0; ch < channelCount; ch++) {
-          channels[ch][s] = channels[ch][s - 1];
-        }
-      }
-    }
-    return (channels: channels, gaps: gaps);
   }
 }
 

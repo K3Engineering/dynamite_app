@@ -149,7 +149,6 @@ void main() {
     final data = SessionData(
       channels: [for (var ch = 0; ch < channels; ch++) Int32List(0)],
       sampleRate: 1000,
-      sampleCount: 0,
       calibrations: meta().calibration,
       tares: meta().tares,
       ssnOrigin: 0,
@@ -181,7 +180,6 @@ void main() {
           Int32List(count)..fillRange(0, count, rawValue),
       ],
       sampleRate: 1000,
-      sampleCount: count,
       calibrations: meta().calibration,
       tares: meta().tares,
       ssnOrigin: 0,

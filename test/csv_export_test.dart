@@ -79,7 +79,6 @@ void main() {
   }) => SessionData(
     channels: [for (final values in perChannel) Int32List.fromList(values)],
     sampleRate: sampleRate,
-    sampleCount: perChannel.first.length,
     calibrations: calibrations ?? nominalCals(),
     tares: tares ?? List.filled(channels, null),
     gaps: gaps,

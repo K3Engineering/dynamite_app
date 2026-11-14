@@ -79,13 +79,15 @@ class BucketAccumulator {
   Float64List? _sumMvV;
 
   int _samples = 0;
+  int _slot = 0;
+  int _offset = 0;
 
   /// Ingest [value] as sample [sampleIndex]. Samples must arrive
   /// sequentially from [sampleIndex] 0 (or the last [reset]).
   void add(int sampleIndex, int value) {
     assert(sampleIndex == _samples, 'samples must be ingested sequentially');
-    final int slot = (sampleIndex ~/ bucketSize) % mins.length;
-    final bool atBucketStart = sampleIndex % bucketSize == 0;
+    final int slot = _slot;
+    final bool atBucketStart = _offset == 0;
     if (atBucketStart) {
       mins[slot] = value;
       maxs[slot] = value;
@@ -110,6 +112,12 @@ class BucketAccumulator {
       }
     }
     _samples = sampleIndex + 1;
+    _offset++;
+    if (_offset == bucketSize) {
+      _offset = 0;
+      _slot++;
+      if (_slot == mins.length) _slot = 0;
+    }
   }
 
   /// Stop serving mV/V sums (see the class doc). Re-armed only by [reset]:
@@ -119,6 +127,8 @@ class BucketAccumulator {
   /// Restart ingest from sample 0; aggregates are overwritten by later [add]s.
   void reset() {
     _samples = 0;
+    _slot = 0;
+    _offset = 0;
     // Re-arm with the CURRENT map (see [disarmMvV]); the old ring is reused
     // -- stale slots are outside the validity window until rewritten, same
     // as the int rings.

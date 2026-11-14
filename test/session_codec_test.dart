@@ -2,17 +2,25 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:dynamite_app/models/channel_calibration.dart';
 import 'package:dynamite_app/services/live_session_writer.dart';
+import 'package:dynamite_app/services/session_preparation.dart';
 
-/// SessionChunkCodec sentinel additions (live_session_writer.dart): the
-/// 24-bit contract on pack, whole-frame gap sentinels, and the decode that
-/// turns sentinel runs back into a GapList with held values.
+/// Raw-session codec and its fused graph-data preparation: the 24-bit packing
+/// contract, whole-frame gap sentinels, and reconstruction of held channel
+/// values plus their aggregates.
 void main() {
   const channels = 4;
   const codec = SessionChunkCodec(channels);
 
   Uint8List packFrames(List<List<int>> frames) =>
       codec.pack(frames.length, (s, ch) => frames[s][ch]);
+
+  PreparedSessionData decode(Uint8List bytes) => decodeAndPrepareSession(
+    codec: codec,
+    bytes: bytes,
+    calibrations: List.filled(channels, const ChannelCalibration(board: null)),
+  );
 
   group('pack enforces the 24-bit contract', () {
     test('accepts the boundary values', () {
@@ -56,10 +64,10 @@ void main() {
       [14, 24, 34, 44], // gap
     ];
 
-    test('decodeWithGaps recovers gaps and hold-fills channels', () {
+    test('fused preparation recovers gaps and hold-fills channels', () {
       final bytes = packFrames(frames);
       codec.fillGapSentinels(bytes, [(1, 3), (4, 5)]);
-      final decoded = codec.decodeWithGaps(bytes);
+      final decoded = decode(bytes);
 
       expect(decoded.gaps.toJson(), '[[1,3],[4,5]]');
       // Gap frames hold the previous real value (frame 0 at first; the
@@ -80,13 +88,13 @@ void main() {
     test('a gap running to the last frame closes at the frame count', () {
       final bytes = packFrames(frames);
       codec.fillGapSentinels(bytes, [(3, 5)]);
-      expect(codec.decodeWithGaps(bytes).gaps.toJson(), '[[3,5]]');
+      expect(decode(bytes).gaps.toJson(), '[[3,5]]');
     });
 
     test('adjacent gap ranges merge in the decoded GapList', () {
       final bytes = packFrames(frames);
       codec.fillGapSentinels(bytes, [(1, 2), (2, 4)]);
-      expect(codec.decodeWithGaps(bytes).gaps.toJson(), '[[1,4]]');
+      expect(decode(bytes).gaps.toJson(), '[[1,4]]');
     });
 
     test('trailing partial bytes throw — a torn tail is damage', () {
@@ -96,32 +104,32 @@ void main() {
         2,
         3,
       ]);
-      expect(() => codec.decodeWithGaps(bytes), throwsStateError);
+      expect(() => decode(bytes), throwsStateError);
     });
 
     test('a non-sentinel value outside the ADC range throws', () {
       final bytes = packFrames(frames);
       ByteData.sublistView(bytes)
           .setInt32(8, SessionChunkCodec.maxAdcValue + 1, Endian.little);
-      expect(() => codec.decodeWithGaps(bytes), throwsStateError);
+      expect(() => decode(bytes), throwsStateError);
 
       final bytes2 = packFrames(frames);
       ByteData.sublistView(bytes2)
           .setInt32(4, SessionChunkCodec.minAdcValue - 1, Endian.little);
-      expect(() => codec.decodeWithGaps(bytes2), throwsStateError);
+      expect(() => decode(bytes2), throwsStateError);
     });
 
     test('a sentinel first frame throws — hold-fill has no predecessor', () {
       final bytes = packFrames(frames);
       codec.fillGapSentinels(bytes, [(0, 1)]);
-      expect(() => codec.decodeWithGaps(bytes), throwsStateError);
+      expect(() => decode(bytes), throwsStateError);
     });
 
     test('a frame mixing sentinel and real values throws', () {
       final bytes = packFrames(frames);
       ByteData.sublistView(bytes)
           .setInt32(0, SessionChunkCodec.gapSentinel, Endian.little);
-      expect(() => codec.decodeWithGaps(bytes), throwsStateError);
+      expect(() => decode(bytes), throwsStateError);
     });
 
     test('fillGapSentinels validates its ranges', () {
