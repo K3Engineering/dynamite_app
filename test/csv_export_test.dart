@@ -88,13 +88,23 @@ void main() {
     deviceKvs: deviceKvs,
   );
 
-  String buildCsv(SessionData data, DisplayUnit unit) => SessionCsvExport(
-    data,
-    unit,
-    recordedAtIso: recordedAtIso,
-    generator: generator,
-    deviceInfo: toSessionDeviceMetadata(name: null, info: testIdentity),
-  ).encode();
+  String buildCsv(
+    SessionData data,
+    DisplayUnit unit, {
+    Map<String, Object?>? deviceInfo,
+    bool interrupted = false,
+  }) => utf8.decode(
+    buildSessionCsvArtifact(
+      sessionName: 'session',
+      recordedAtIso: recordedAtIso,
+      deviceInfo:
+          deviceInfo ?? toSessionDeviceMetadata(name: null, info: testIdentity),
+      data: data,
+      unit: unit,
+      generator: generator,
+      interrupted: interrupted,
+    ).bytes,
+  );
 
   /// The metadata line parsed as JSON (line index 1, `# ` prefix stripped).
   Map<String, dynamic> metadataOf(String csv) {
@@ -109,7 +119,7 @@ void main() {
   List<String> bodyOf(String csv) =>
       csv.trim().split('\n').skipWhile((l) => l.startsWith('#')).toList();
 
-  group('SessionCsvExport', () {
+  group('buildSessionCsvArtifact', () {
     test('emits the full artifact byte-for-byte', () {
       final data = makeSession([
         [10, 20, 30],
@@ -257,14 +267,7 @@ ssn,ch0,ch1,ch0_kgf,ch1_kgf
       // Byte-pinned too: even a differently-encoded key must not appear.
       expect(completeCsv, isNot(contains('"interrupted"')));
 
-      final interruptedCsv = SessionCsvExport(
-        data,
-        DisplayUnit.kgf,
-        recordedAtIso: recordedAtIso,
-        generator: generator,
-        deviceInfo: toSessionDeviceMetadata(name: null, info: testIdentity),
-        interrupted: true,
-      ).encode();
+      final interruptedCsv = buildCsv(data, DisplayUnit.kgf, interrupted: true);
       final interruptedMeta = metadataOf(interruptedCsv);
       expect(interruptedMeta['interrupted'], isTrue);
       expect(interruptedMeta['sample_rate_hz'], 1000);
@@ -279,11 +282,9 @@ ssn,ch0,ch1,ch0_kgf,ch1_kgf
       ]);
 
       final meta = metadataOf(
-        SessionCsvExport(
+        buildCsv(
           data,
           DisplayUnit.kgf,
-          recordedAtIso: recordedAtIso,
-          generator: generator,
           deviceInfo: const {
             'name': 'DS A4CF1208F51E',
             'id': 'A4CF1208F51E',
@@ -293,7 +294,7 @@ ssn,ch0,ch1,ch0_kgf,ch1_kgf
             'framework': 'ESP-IDF v6.1',
             'manufacturer': 'K3 Engineering',
           },
-        ).encode(),
+        ),
       );
 
       expect(meta['device'], {

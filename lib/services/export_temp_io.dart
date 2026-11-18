@@ -12,6 +12,8 @@ import 'package:path_provider/path_provider.dart';
 Future<String> writeTempExportFile(Uint8List bytes, String fileName) async {
   final dir = Directory('${(await getTemporaryDirectory()).path}/exports');
   await dir.create(recursive: true);
+  // TODO(export): Investigate separate directories per export to isolate
+  // concurrent shares without losing crash-leftover cleanup.
   await for (final stale in dir.list()) {
     try {
       await stale.delete();

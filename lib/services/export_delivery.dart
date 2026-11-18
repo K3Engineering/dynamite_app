@@ -12,7 +12,6 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:share_plus/share_plus.dart';
 
-import 'share_capability.dart';
 import 'export_temp_stub.dart' if (dart.library.io) 'export_temp_io.dart';
 
 /// A build artifact on its way to the OS: the file bytes, its sanitized
@@ -20,36 +19,43 @@ import 'export_temp_stub.dart' if (dart.library.io) 'export_temp_io.dart';
 /// produce and every delivery path consumes.
 typedef ExportArtifact = ({Uint8List bytes, String fileName, String mimeType});
 
+/// Screen-position rect for the iPad share popover, in global coordinates
+/// (ignored elsewhere). A plain record so the delivery API stays free of
+/// `dart:ui`; converted to share_plus's `Rect` type at the plugin boundary.
+typedef ShareAnchor = ({double left, double top, double width, double height});
+
 /// One delivery path ([downloadExport] or [shareExport]) as a value: takes
 /// a built artifact, hands it to the OS, returns the user-facing result
 /// (null = the user cancelled).
 typedef ExportDelivery = Future<String?> Function(ExportArtifact artifact);
 
+/// Whether the file-share flow can present a share UI on this platform:
+/// share_plus shares files on Android, iOS, macOS, Windows and web, but not
+/// Linux.
+bool get fileShareSupportedHere {
+  if (kIsWeb) return true;
+  return defaultTargetPlatform != TargetPlatform.linux &&
+      defaultTargetPlatform != TargetPlatform.fuchsia;
+}
+
 /// [downloadExport] as an [ExportDelivery]: the save-as dialog's title is the
 /// only thing a caller varies.
 ExportDelivery downloadDelivery(String dialogTitle) =>
-    (a) => downloadExport(
-      bytes: a.bytes,
-      fileName: a.fileName,
-      dialogTitle: dialogTitle,
-    );
+    (artifact) => downloadExport(artifact, dialogTitle: dialogTitle);
 
 /// [shareExport] as an [ExportDelivery]. [anchor] positions the iPad popover
 /// (see [fullScreenShareAnchor]).
 ExportDelivery shareDelivery(String dialogTitle, {ShareAnchor? anchor}) =>
-    (a) => shareExport(
-      bytes: a.bytes,
-      fileName: a.fileName,
-      mimeType: a.mimeType,
-      dialogTitle: dialogTitle,
-      anchor: anchor,
-    );
+    (artifact) =>
+        shareExport(artifact, dialogTitle: dialogTitle, anchor: anchor);
 
 /// Anchor rect for the iPad share popover when there is no natural source
 /// widget (app-bar menu, button row): the whole screen.
-ShareAnchor? fullScreenShareAnchor(BuildContext context) {
+ShareAnchor fullScreenShareAnchor(BuildContext context) {
   final box = context.findRenderObject();
-  if (box is! RenderBox) return null;
+  if (box is! RenderBox) {
+    throw StateError('A share anchor needs a render box');
+  }
   final global = box.localToGlobal(Offset.zero);
   final size = box.size;
   return (
@@ -66,19 +72,18 @@ ShareAnchor? fullScreenShareAnchor(BuildContext context) {
 /// Returns a user-facing result message, or null when the user cancelled —
 /// callers should stay silent then. Errors are thrown for the caller to
 /// surface.
-Future<String?> downloadExport({
-  required Uint8List bytes,
-  required String fileName,
+Future<String?> downloadExport(
+  ExportArtifact artifact, {
   required String dialogTitle,
 }) async {
   final savedTo = await FilePicker.saveFile(
     dialogTitle: dialogTitle,
-    fileName: fileName,
-    bytes: bytes,
+    fileName: artifact.fileName,
+    bytes: artifact.bytes,
   );
   if (kIsWeb) {
     // The browser handles the download; saveFile always returns null there.
-    return 'Download started for $fileName';
+    return 'Download started for ${artifact.fileName}';
   }
   // Null = user cancelled the dialog.
   return savedTo == null ? null : 'Saved to $savedTo';
@@ -87,10 +92,8 @@ Future<String?> downloadExport({
 /// Share the export via the platform share sheet. [anchor] positions the iPad
 /// popover. Returns a user-facing message, or null when dismissed. Errors are
 /// thrown for the caller to surface.
-Future<String?> shareExport({
-  required Uint8List bytes,
-  required String fileName,
-  required String mimeType,
+Future<String?> shareExport(
+  ExportArtifact artifact, {
   required String dialogTitle,
   ShareAnchor? anchor,
 }) async {
@@ -98,11 +101,11 @@ Future<String?> shareExport({
   if (kIsWeb) {
     // XFile.name is ignored by most platforms; share_plus's fileNameOverrides
     // is what sets the shared/downloaded file's name.
-    file = XFile.fromData(bytes, mimeType: mimeType);
+    file = XFile.fromData(artifact.bytes, mimeType: artifact.mimeType);
   } else {
     file = XFile(
-      await writeTempExportFile(bytes, fileName),
-      mimeType: mimeType,
+      await writeTempExportFile(artifact.bytes, artifact.fileName),
+      mimeType: artifact.mimeType,
     );
   }
   ShareResult result;
@@ -111,7 +114,7 @@ Future<String?> shareExport({
       ShareParams(
         title: dialogTitle,
         files: [file],
-        fileNameOverrides: [fileName],
+        fileNameOverrides: [artifact.fileName],
         sharePositionOrigin: anchor == null
             ? null
             : Rect.fromLTWH(
@@ -126,10 +129,11 @@ Future<String?> shareExport({
     if (!kIsWeb) await deleteTempExportFile(file.path);
   }
   return switch (result.status) {
-    ShareResultStatus.success => 'Shared $fileName',
+    ShareResultStatus.success => 'Shared ${artifact.fileName}',
     // Backed out of the share sheet: null = the caller shows no snackbar.
     ShareResultStatus.dismissed => null,
     // The platform can't tell what happened; treat as shared.
-    ShareResultStatus.unavailable => 'Shared $fileName (status unknown)',
+    ShareResultStatus.unavailable =>
+      'Shared ${artifact.fileName} (status unknown)',
   };
 }
