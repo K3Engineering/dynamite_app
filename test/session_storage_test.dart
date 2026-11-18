@@ -19,6 +19,8 @@ import 'package:dynamite_app/services/session_journal.dart';
 import 'package:dynamite_app/services/session_store.dart';
 import 'package:dynamite_app/services/session_store_backend.dart';
 
+import 'helpers/session_data_fixture.dart';
+
 /// Storage-side session tests: the live writer (snapshot latch, backpressure,
 /// ssn origin), finalize's ack-length check and interrupted verdicts, and
 /// the file store's listing/damage/edit verdicts. Every test runs against
@@ -115,14 +117,13 @@ void main() {
   }
 
   group('SessionData.channelExtremes', () {
-    SessionData makeSession(List<int> values) => SessionData(
+    SessionData makeSession(List<int> values) => sessionDataFixture(
       channels: [
         for (int ch = 0; ch < channels; ch++) Int32List.fromList(values),
       ],
       sampleRate: 1000,
       calibrations: nominalCals(),
       tares: List.filled(channels, 0.0),
-      ssnOrigin: 0,
     );
 
     test('a never-positive channel reports its true (negative) peaks', () {

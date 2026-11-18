@@ -34,39 +34,27 @@ class SessionDetailScreen extends StatefulWidget {
 }
 
 class _SessionDetailScreenState extends State<SessionDetailScreen> {
-  /// Load state of the session's sample data (see [_LoadState]).
-  _LoadState _loadState = const _Loading();
-
   final GraphController _graphCtrl = GraphController(isLiveSource: false);
 
   /// dF/dt pane visibility for the replay graph.
   bool _showDerivative = false;
 
   late final ValueListenable<SessionCatalogState> _catalog;
+  late final Future<SessionData> _data;
 
   @override
   void initState() {
     super.initState();
     _catalog = SessionStore.instance.catalog;
-    unawaited(SessionStore.instance.ensureCatalogLoaded().catchError((_) {}));
-    unawaited(_loadData());
+    // Loading through the store also ensures the catalog is available. Cache
+    // the future so catalog edits don't reload samples or reset the graph.
+    _data = SessionStore.instance.loadSession(widget.session.id);
   }
 
   @override
   void dispose() {
     _graphCtrl.dispose();
     super.dispose();
-  }
-
-  Future<void> _loadData() async {
-    try {
-      final data = await SessionStore.instance.loadSession(widget.session.id);
-      if (!mounted) return;
-      setState(() => _loadState = _Ready(data));
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _loadState = _Failed(e));
-    }
   }
 
   @override
@@ -108,48 +96,56 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   Widget _buildSession(
     AppSettings settings,
     SessionSummary session,
-  ) => Scaffold(
-    appBar: AppBar(
-      title: Text(session.name.isEmpty ? untitledSessionName : session.name),
-      actions: [
-        PopupMenuButton<String>(
-          onSelected: (action) => _onMenuAction(action, session),
-          itemBuilder: (_) => [
-            const PopupMenuItem(value: 'rename', child: Text('Rename')),
-            const PopupMenuItem(value: 'notes', child: Text('Edit notes')),
-            const PopupMenuItem(
-              value: 'download_csv',
-              child: Text('Download CSV'),
-            ),
-            PopupMenuItem(
-              value: 'share_csv',
-              enabled: fileShareSupportedHere,
-              child: Text(
-                'Share CSV'
-                '${fileShareSupportedHere ? '' : ' (not supported here)'}',
+  ) => FutureBuilder<SessionData>(
+    future: _data,
+    builder: (context, snapshot) => Scaffold(
+      appBar: AppBar(
+        title: Text(session.name.isEmpty ? untitledSessionName : session.name),
+        actions: [
+          PopupMenuButton<String>(
+            onSelected: (action) =>
+                _onMenuAction(action, session, snapshot.data),
+            itemBuilder: (_) => [
+              const PopupMenuItem(value: 'rename', child: Text('Rename')),
+              const PopupMenuItem(value: 'notes', child: Text('Edit notes')),
+              const PopupMenuItem(
+                value: 'download_csv',
+                child: Text('Download CSV'),
               ),
-            ),
-            PopupMenuItem(
-              value: 'delete',
-              child: Text(
-                'Delete',
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              PopupMenuItem(
+                value: 'share_csv',
+                enabled: fileShareSupportedHere,
+                child: Text(
+                  'Share CSV'
+                  '${fileShareSupportedHere ? '' : ' (not supported here)'}',
+                ),
               ),
-            ),
-          ],
-        ),
-      ],
-    ),
-    body: switch (_loadState) {
-      _Loading() => const Center(child: CircularProgressIndicator()),
-      _Failed(:final error) => EmptyPlaceholder(
-        icon: Icons.error_outline,
-        title: 'Error loading session',
-        hint: '$error',
-        color: Theme.of(context).colorScheme.error,
+              PopupMenuItem(
+                value: 'delete',
+                child: Text(
+                  'Delete',
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
-      _Ready(:final data) => _buildContent(settings, session, data),
-    },
+      body: switch (snapshot) {
+        AsyncSnapshot(:final error?) => EmptyPlaceholder(
+          icon: Icons.error_outline,
+          title: 'Error loading session',
+          hint: '$error',
+          color: Theme.of(context).colorScheme.error,
+        ),
+        AsyncSnapshot(connectionState: ConnectionState.done) => _buildContent(
+          settings,
+          session,
+          snapshot.requireData,
+        ),
+        _ => const Center(child: CircularProgressIndicator()),
+      },
+    ),
   );
 
   Widget _buildContent(
@@ -301,22 +297,20 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     );
   }
 
-  Future<void> _onMenuAction(String action, SessionSummary session) async {
+  Future<void> _onMenuAction(
+    String action,
+    SessionSummary session,
+    SessionData? data,
+  ) async {
     switch (action) {
       case 'rename':
         await _showRenameDialog(session);
       case 'notes':
         await _showNotesDialog(session);
       case 'download_csv':
-        final state = _loadState;
-        if (state is _Ready) {
-          await _downloadCsv(session, state.data);
-        }
+        if (data != null) await _downloadCsv(session, data);
       case 'share_csv':
-        final state = _loadState;
-        if (state is _Ready) {
-          await _shareCsv(session, state.data);
-        }
+        if (data != null) await _shareCsv(session, data);
       case 'delete':
         await _deleteAndPop(session);
     }
@@ -458,29 +452,6 @@ class _InterruptedBanner extends StatelessWidget {
       ),
     );
   }
-}
-
-// -- Load state --
-
-/// Load state for the session's sample data: still loading, failed, or ready.
-sealed class _LoadState {
-  const new();
-}
-
-final class _Loading extends _LoadState {
-  const new();
-}
-
-final class _Failed extends _LoadState {
-  const new(this.error);
-
-  final Object error;
-}
-
-final class _Ready extends _LoadState {
-  const new(this.data);
-
-  final SessionData data;
 }
 
 // -- Stat row widget --

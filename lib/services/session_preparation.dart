@@ -28,9 +28,9 @@ class PreparedSessionData {
   int get sampleCount => channels.first.length;
 }
 
-/// Aggregate construction shared by the packed-byte decoder and callers that
-/// already hold channel arrays. ChannelIngest remains the definition of value,
-/// difference, gap and extrema behavior for both live and recorded data.
+/// Aggregate construction for the packed-byte decoder. ChannelIngest remains
+/// the definition of value, difference, gap and extrema behavior for both live
+/// and recorded data.
 class _AggregateBuilder {
   new _(
     this._ingests,
@@ -101,24 +101,6 @@ class _AggregateBuilder {
             },
         ],
       );
-}
-
-/// Prepare aggregates for samples already split into per-channel arrays. The
-/// recording loader uses [decodeAndPrepareSession] instead, avoiding this
-/// second traversal after byte decoding.
-PreparedSessionData prepareSessionChannels({
-  required List<Int32List> channels,
-  required List<ChannelCalibration> calibrations,
-  required GapList gaps,
-}) {
-  final int sampleCount = channels.first.length;
-  final aggregates = _AggregateBuilder.create(sampleCount, calibrations, gaps);
-  for (int ch = 0; ch < channels.length; ch++) {
-    for (int i = 0; i < sampleCount; i++) {
-      aggregates.add(i, ch, channels[ch][i], i > 0 ? channels[ch][i - 1] : 0);
-    }
-  }
-  return aggregates.complete(channels, gaps);
 }
 
 /// Strictly decode packed sample frames and build every graph aggregate in the
