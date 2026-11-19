@@ -287,7 +287,7 @@ void main() {
       await tester.tap(find.byType(NavigationDestination).at(3));
       await tester.pump();
       await tester.scrollUntilVisible(
-        find.text('Connection info'),
+        find.text('Max packet size'),
         300,
         scrollable: find.descendant(
           of: find.byType(SettingsTab),

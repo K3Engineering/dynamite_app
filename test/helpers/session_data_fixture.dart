@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:dynamite_app/models/channel_calibration.dart';
+import 'package:dynamite_app/models/derived_channel.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/gap_list.dart';
 import 'package:dynamite_app/services/live_session_writer.dart';
@@ -18,6 +19,7 @@ SessionData sessionDataFixture({
   GapList? gaps,
   int ssnOrigin = 0,
   KvsSnapshot? deviceKvs,
+  MathProfile? mathProfile,
 }) {
   final count = channels.first.length;
   final codec = SessionChunkCodec(channels.length);
@@ -33,5 +35,6 @@ SessionData sessionDataFixture({
     tares: tares,
     ssnOrigin: ssnOrigin,
     deviceKvs: deviceKvs,
+    mathProfile: mathProfile,
   );
 }
