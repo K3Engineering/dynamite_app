@@ -9,6 +9,7 @@ import 'package:material_ui/material_ui.dart';
 import '../services/session_store.dart';
 import '../utils/format.dart';
 import 'dialogs.dart';
+import 'snackbars.dart';
 
 /// Rename-a-session flow. Callers relying on reactive session streams need
 /// no further refresh.
@@ -25,7 +26,16 @@ Future<void> renameSessionFlow(
     initial: currentName,
   ))?.trim();
   if (newName != null && newName.isNotEmpty) {
-    await SessionStore.instance.renameSession(sessionId, newName);
+    try {
+      await SessionStore.instance.renameSession(sessionId, newName);
+    } catch (error) {
+      if (context.mounted) {
+        showErrorSnackBar(
+          ScaffoldMessenger.of(context),
+          'Failed to rename session: $error',
+        );
+      }
+    }
   }
 }
 

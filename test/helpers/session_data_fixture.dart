@@ -9,7 +9,7 @@ import 'package:dynamite_app/services/session_preparation.dart';
 
 /// Build a fixture through packed storage and the production decoder, keeping
 /// channel values, gaps, and graph aggregates consistent by construction.
-/// Gap samples must already hold the preceding sample's value.
+/// The decoder replaces values at gap indices with the preceding sample.
 SessionData sessionDataFixture({
   required List<Int32List> channels,
   required int sampleRate,
@@ -35,21 +35,6 @@ SessionData sessionDataFixture({
   final codec = SessionChunkCodec(channels.length);
   final bytes = codec.pack(count, (s, ch) => channels[ch][s]);
   codec.fillGapSentinels(bytes, gaps?.ranges ?? const []);
-  for (final (start, end) in gaps?.ranges ?? const <(int, int)>[]) {
-    for (int s = start; s < end; s++) {
-      // A gap at sample 0 has no held value; the decoder rejects it below.
-      if (s == 0) continue;
-      for (int ch = 0; ch < channels.length; ch++) {
-        if (channels[ch][s] != channels[ch][s - 1]) {
-          throw ArgumentError.value(
-            channels[ch][s],
-            'channels[$ch][$s]',
-            'gap samples must hold ${channels[ch][s - 1]}',
-          );
-        }
-      }
-    }
-  }
   return SessionData.fromPrepared(
     prepared: decodeAndPrepareSession(
       codec: codec,

@@ -93,10 +93,15 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       valueListenable: _catalog,
       builder: (context, state, _) {
         return switch (state) {
-          SessionCatalogLoading() => _buildSession(
-            settings,
-            widget.session,
-            _data,
+          SessionCatalogLoading() => Scaffold(
+            appBar: AppBar(
+              title: Text(
+                widget.session.name.isEmpty
+                    ? untitledSessionName
+                    : widget.session.name,
+              ),
+            ),
+            body: const Center(child: CircularProgressIndicator()),
           ),
           SessionCatalogFailed(:final error) => Scaffold(
             appBar: AppBar(title: const Text('Error loading sessions')),
@@ -110,7 +115,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           SessionCatalogReady(:final catalog) => switch (catalog.session(
             widget.session.id,
           )) {
-            final session? => _buildSession(settings, session, _data),
+            final session? => _buildSession(settings, session, _data!),
             null => Scaffold(
               appBar: AppBar(title: const Text('Session unavailable')),
               body: const EmptyPlaceholder(
@@ -127,9 +132,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   Widget _buildSession(
     AppSettings settings,
-    SessionSummary session, [
-    Future<SessionData>? data,
-  ]) => FutureBuilder<SessionData>(
+    SessionSummary session,
+    Future<SessionData> data,
+  ) => FutureBuilder<SessionData>(
     future: data,
     builder: (context, snapshot) {
       final loadedData = snapshot.connectionState == ConnectionState.done

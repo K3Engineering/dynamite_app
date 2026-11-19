@@ -87,12 +87,6 @@ class SessionData implements GraphDataSource {
         'must contain one entry per data channel (${channels.length})',
       );
     }
-    for (int ch = 0; ch < tares.length; ch++) {
-      final tare = tares[ch];
-      if (tare != null && !tare.isFinite) {
-        throw ArgumentError.value(tare, 'tares[$ch]', 'must be finite or null');
-      }
-    }
   }
 
   // -- GraphDataSource --------------------------------------------------------

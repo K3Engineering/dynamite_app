@@ -89,7 +89,7 @@ class _AggregateBuilder {
   PreparedSessionData complete(List<Int32List> channels, GapList gaps) =>
       PreparedSessionData._(
         channels: List.unmodifiableOf(channels),
-        calibrations: List.unmodifiableOf(calibrations),
+        calibrations: calibrations,
         gaps: gaps,
         valueBuckets: List.unmodifiableOf(_valueBuckets),
         diffBuckets: List.unmodifiableOf(_diffBuckets),

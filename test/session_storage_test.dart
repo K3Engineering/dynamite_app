@@ -472,6 +472,75 @@ void main() {
       expect(await failing.isFinalized(writer.sessionId!), isFalse);
     });
 
+    test(
+      'a failed catalog does not block finalization or retain live bytes',
+      () async {
+        final failing = _FaultBackend(
+          IoSessionFilesBackend('${tmp.path}/sessions'),
+        );
+        SessionStore.instance = store = SessionStore.over(failing);
+        final hub = DataHub();
+        hub.notePacketCounter(0);
+        final frame = Int32List(channels);
+        for (int i = 0; i < 1100; i++) {
+          hub.addSampleFrame(frame);
+        }
+        final writer = startFromHub(hub, name: 'catalog failed');
+        await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
+
+        failing.failNextListings = 1;
+        await expectLater(store.refreshCatalog(), throwsStateError);
+        await SessionStore.instance.finalizeSession(writer: writer);
+
+        final listed = readyCatalog();
+        expect(await failing.isFinalized(writer.sessionId!), isTrue);
+        expect(listed.sessions.single.interrupted, isFalse);
+        expect(await store.usedBytes(), listed.totalBytes);
+      },
+    );
+
+    test('abort preserves the recording error and releases a failed-catalog session', () async {
+      final failing = _FaultBackend(
+        IoSessionFilesBackend('${tmp.path}/sessions'),
+      );
+      SessionStore.instance = store = SessionStore.over(failing);
+      final hub = DataHub();
+      hub.notePacketCounter(0);
+      final frame = Int32List(channels);
+      for (int i = 0; i < 1100; i++) {
+        hub.addSampleFrame(frame);
+      }
+      final writer = startFromHub(hub, name: 'abort failed');
+      await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
+
+      failing.failNextListings = 1;
+      await expectLater(store.refreshCatalog(), throwsStateError);
+      failing
+        ..failTouchFinal = true
+        ..failListings = true;
+
+      await expectLater(
+        () => SessionStore.instance.finalizeSession(writer: writer),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('marker write failed'),
+          ),
+        ),
+      );
+      expect(store.catalog.value, isA<SessionCatalogFailed>());
+
+      // Recovery must see the interrupted recording, not an id still hidden
+      // as live, and its bytes must not also remain in the live total.
+      failing.failListings = false;
+      await store.refreshCatalog();
+      final listed = readyCatalog();
+      expect(listed.sessions.single.id, writer.sessionId);
+      expect(listed.sessions.single.interrupted, isTrue);
+      expect(await store.usedBytes(), listed.totalBytes);
+    });
+
     test('an intact multi-packet recording finalizes with no error', () async {
       final hub = DataHub();
       hub.notePacketCounter(0);

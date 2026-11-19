@@ -240,10 +240,18 @@ class SessionStore {
     });
   });
 
+  /// Publish after recording without requiring an available catalog first.
+  /// A delta is sufficient when Ready; Loading and Failed need a full scan.
+  Future<void> _refreshAfterRecording(SessionFilesBackend files, String id) =>
+      switch (_catalog.value) {
+        SessionCatalogReady() => _refreshCatalogEntry(files, id),
+        _ => _publishCatalog(files),
+      };
+
   /// Write the completion marker (the only write of it anywhere).
   /// finalizeSession calls this after its count check passed; anything else
-  /// gets [abortSession].
-  Future<void> touchFinal(String id) => _withCatalog((files, _) async {
+  /// gets [abortSession]. Catalog failure cannot veto the marker or cleanup.
+  Future<void> touchFinal(String id) => _enqueue((files) async {
     try {
       await files.touchFinal(id);
     } finally {
@@ -252,15 +260,15 @@ class SessionStore {
       _liveSessionId = null;
       _liveBytes = 0;
     }
-    await _refreshCatalogEntry(files, id);
+    await _refreshAfterRecording(files, id);
   });
 
-  /// The writer latched a failure: [id] gets no marker. Drops ownership and
-  /// splices the fresh (interrupted) verdict in.
-  Future<void> abortSession(String id) => _withCatalog((files, _) async {
+  /// The writer latched a failure: [id] gets no marker. Drops ownership even
+  /// when the catalog is unavailable, then publishes the interrupted verdict.
+  Future<void> abortSession(String id) => _enqueue((files) async {
     _liveSessionId = null;
     _liveBytes = 0;
-    await _refreshCatalogEntry(files, id);
+    await _refreshAfterRecording(files, id);
   });
 
   // -- Listing and load ------------------------------------------------------
@@ -537,7 +545,11 @@ class SessionStore {
     }
     if (error != null) {
       if (run != null) {
-        await abortSession(run.id);
+        try {
+          await abortSession(run.id);
+        } catch (_) {
+          // Cleanup's catalog error must not replace the recording failure.
+        }
       }
       // Not `throw error`: only_throw_errors bans throwing Object?. Latched
       // writer errors are StateErrors with no trace to preserve anyway.

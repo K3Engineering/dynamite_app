@@ -253,6 +253,32 @@ void main() {
     await unmount(tester);
   });
 
+  testWidgets('a loading catalog exposes no session actions', (tester) async {
+    final backend = Completer<SessionFilesBackend>();
+    SessionStore.instance = SessionStore.overFuture(backend.future);
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AppSettings>.value(
+            value: AppSettings(prefs: prefs),
+          ),
+        ],
+        child: MaterialApp(
+          home: SessionDetailScreen(
+            session: summary('2026-08-28T14-30-12-10ad'),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(PopupMenuButton<String>), findsNothing);
+    expect(tester.takeException(), isNull);
+    await unmount(tester);
+  });
+
   testWidgets(
     'a failed catalog before the data builder mounts handles the load error',
     (tester) async {
@@ -485,7 +511,7 @@ void main() {
     await tester.enterText(find.byType(TextField), 'Unsaved name');
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
-    final errorSnackBar = find.textContaining('Session action failed:');
+    final errorSnackBar = find.textContaining('Failed to rename session:');
     for (var i = 0; i < 100 && errorSnackBar.evaluate().isEmpty; i++) {
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 20)),
@@ -494,7 +520,7 @@ void main() {
     }
 
     expect(tester.takeException(), isNull);
-    expect(find.textContaining('Session action failed:'), findsOneWidget);
+    expect(find.textContaining('Failed to rename session:'), findsOneWidget);
     expect(find.text('Detail session'), findsOneWidget);
     await unmount(tester);
   });
