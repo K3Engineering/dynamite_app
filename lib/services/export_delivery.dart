@@ -24,10 +24,14 @@ typedef ExportArtifact = ({Uint8List bytes, String fileName, String mimeType});
 /// stays free of `dart:ui`; converted to share_plus's `Rect` at the boundary.
 typedef ShareAnchor = ({double left, double top, double width, double height});
 
-/// One delivery path ([downloadExport] or [shareExport]) as a value: takes
-/// a built artifact, hands it to the OS, returns the user-facing result
-/// (null = the user cancelled).
-typedef ExportDelivery = Future<String?> Function(ExportArtifact artifact);
+/// One delivery path ([downloadExport] or [shareExport]) as a value: hands
+/// a built artifact to the OS and returns the user-facing result (null =
+/// the user cancelled). The context is supplied after async artifact-building,
+/// so [shareDelivery] doesn't hide an async context use from the analyzer.
+typedef ExportDelivery = Future<String?> Function(
+  BuildContext context,
+  ExportArtifact artifact,
+);
 
 /// Whether the file-share flow can present a share UI on this platform:
 /// share_plus shares files on Android, iOS, macOS, Windows and web, but not
@@ -41,27 +45,42 @@ bool get fileShareSupportedHere {
 /// [downloadExport] as an [ExportDelivery]: the save-as dialog's title is the
 /// only thing a caller varies.
 ExportDelivery downloadDelivery(String dialogTitle) =>
-    (artifact) => downloadExport(artifact, dialogTitle: dialogTitle);
+    (context, artifact) => downloadExport(artifact, dialogTitle: dialogTitle);
 
-/// [shareExport] as an [ExportDelivery], anchored to the center of [context]'s
-/// render box. Geometry is read when the artifact is delivered, not when this
-/// closure is created: CSV export awaits its unit-picker dialog in between.
-ExportDelivery shareDelivery(String dialogTitle, BuildContext context) =>
-    (artifact) => shareExport(
+/// [shareExport] as an [ExportDelivery], anchored to the invoking widget.
+ExportDelivery shareDelivery(
+  String dialogTitle, {
+  @visibleForTesting SharePlus? sharePlugin,
+}) =>
+    (context, artifact) => shareExport(
       artifact,
       dialogTitle: dialogTitle,
-      anchor: _centeredShareAnchor(context),
+      anchor: shareAnchorFor(context),
+      sharePlugin: sharePlugin,
     );
 
-/// A point-sized rect prevents a full-screen source from excluding every edge
-/// an iPad popover could use, and centers the macOS share menu as well.
-ShareAnchor _centeredShareAnchor(BuildContext context) {
+/// The invoking widget's global bounds. A widget filling the view collapses
+/// to its center: a full-screen source leaves an iPad popover no free edge.
+@visibleForTesting
+ShareAnchor shareAnchorFor(BuildContext context) {
   final box = context.findRenderObject();
-  if (box is! RenderBox) {
-    throw StateError('A share anchor needs a render box');
+  if (box is! RenderBox || !box.hasSize) {
+    throw StateError('A share anchor needs a laid-out render box');
   }
   final center = box.localToGlobal(box.size.center(Offset.zero));
-  return (left: center.dx - 1, top: center.dy - 1, width: 2, height: 2);
+  final isFullView =
+      box.size.width >= MediaQuery.sizeOf(context).width &&
+      box.size.height >= MediaQuery.sizeOf(context).height;
+  if (isFullView) {
+    return (left: center.dx - 1, top: center.dy - 1, width: 2, height: 2);
+  }
+  final origin = box.localToGlobal(Offset.zero);
+  return (
+    left: origin.dx,
+    top: origin.dy,
+    width: box.size.width,
+    height: box.size.height,
+  );
 }
 
 /// Download the export as a save-as dialog on native platforms, a browser
@@ -85,7 +104,11 @@ Future<String?> downloadExport(
     return 'Download started for ${artifact.fileName}';
   }
   // Null = user cancelled the dialog.
-  return savedTo == null ? null : 'Saved to $savedTo';
+  if (savedTo == null) return null;
+  final path = savedTo.scheme == 'file'
+      ? savedTo.toFilePath(windows: defaultTargetPlatform == .windows)
+      : savedTo.toString();
+  return 'Saved to $path';
 }
 
 /// Share the export via the platform share sheet. [anchor] positions iPad
@@ -95,6 +118,7 @@ Future<String?> shareExport(
   ExportArtifact artifact, {
   required String dialogTitle,
   required ShareAnchor anchor,
+  @visibleForTesting SharePlus? sharePlugin,
 }) async {
   final XFile file;
   if (kIsWeb) {
@@ -107,7 +131,7 @@ Future<String?> shareExport(
       mimeType: artifact.mimeType,
     );
   }
-  final result = await SharePlus.instance.share(
+  final result = await (sharePlugin ?? SharePlus.instance).share(
     ShareParams(
       title: dialogTitle,
       files: [file],

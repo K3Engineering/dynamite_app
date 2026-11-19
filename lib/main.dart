@@ -17,6 +17,8 @@ import 'services/demo_device.dart';
 import 'services/feed_health_tracker.dart';
 import 'services/firmware_catalog.dart';
 import 'services/firmware_update_service.dart';
+import 'services/export_temp_stub.dart'
+    if (dart.library.io) 'services/export_temp_io.dart';
 // Debug-only hot-restart hook: web BLE listeners and timers survive a hot
 // restart, so each generation registers a cleanup the next one runs first.
 import 'services/hot_restart_cleanup_stub.dart'
@@ -33,6 +35,11 @@ import 'screens/app_shell.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  unawaited(
+    clearStaleShareExports().catchError((Object error) {
+      debugPrint('Share export cleanup failed: $error');
+    }),
+  );
   if (kReleaseMode) ErrorWidget.builder = (_) => const _FatalErrorWidget();
   // Tear down the previous hot-restart generation's BLE link first, so its
   // stale notifications stop and its GATT connection is released.

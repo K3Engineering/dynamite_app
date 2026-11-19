@@ -83,7 +83,7 @@ extension DisplayUnitCsv on DisplayUnit {
     ..write(_csv.encode(_bodyRows(data, unit, columns)))
     ..writeln();
   return (
-    bytes: Uint8List.fromList(utf8.encode(buf.toString())),
+    bytes: utf8.encode(buf.toString()),
     fileName: csvFileNameForSession(sessionName),
     mimeType: 'text/csv',
   );
