@@ -14,7 +14,7 @@ import 'support/export_platform_fakes.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  const anchor = (left: 1.0, top: 2.0, width: 2.0, height: 2.0);
+  const anchor = Rect.fromLTWH(1, 2, 2, 2);
   final originalFilePicker = FilePickerPlatform.instance;
   final originalPathProvider = PathProviderPlatform.instance;
   final originalSharePlatform = SharePlatform.instance;
@@ -127,78 +127,15 @@ void main() {
     }
   });
 
-  testWidgets(
-    'shareDelivery uses the invoking widget full bounds at delivery',
-    (tester) async {
-      final key = GlobalKey();
-      Widget host(double left) => MaterialApp(
-        home: Scaffold(
-          body: Align(
-            alignment: Alignment.topLeft,
-            child: Padding(
-              padding: EdgeInsets.only(left: left, top: 30),
-              child: SizedBox(key: key, width: 100, height: 50),
-            ),
-          ),
-        ),
-      );
-
-      await tester.pumpWidget(host(20));
-      final delivery = shareDelivery('Share CSV');
-      await tester.pumpWidget(host(40));
-      // Native temp-file I/O needs the real event loop, not fake-async pumping.
-      await tester.runAsync(
-        () => delivery(key.currentContext!, newArtifact([1])),
-      );
-
-      expect(
-        sharePlatform.calls.single.sharePositionOrigin,
-        const Rect.fromLTWH(40, 30, 100, 50),
-      );
-    },
-  );
-
-  testWidgets('shareAnchorFor clips a partially visible source', (
+  testWidgets('shareAnchorFor centers the share UI in the view', (
     tester,
   ) async {
     final key = GlobalKey();
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Align(
-          alignment: Alignment.topLeft,
-          child: Padding(
-            padding: const EdgeInsets.only(top: 580),
-            child: SizedBox(key: key, width: 100, height: 50),
-          ),
-        ),
-      ),
+    await tester.pumpWidget(MaterialApp(home: Scaffold(key: key)));
+
+    expect(
+      shareAnchorFor(key.currentContext!),
+      const Rect.fromLTWH(399, 299, 2, 2),
     );
-
-    expect(shareAnchorFor(key.currentContext!), (
-      left: 0.0,
-      top: 580.0,
-      width: 100.0,
-      height: 20.0,
-    ));
-  });
-
-  testWidgets('shareAnchorFor centers an invisible source', (tester) async {
-    final key = GlobalKey();
-    Widget host(double top, double size) => MaterialApp(
-      home: Align(
-        alignment: Alignment.topLeft,
-        child: Padding(
-          padding: EdgeInsets.only(top: top),
-          child: SizedBox(key: key, width: size, height: size),
-        ),
-      ),
-    );
-    const centered = (left: 399.0, top: 299.0, width: 2.0, height: 2.0);
-
-    await tester.pumpWidget(host(700, 100));
-    expect(shareAnchorFor(key.currentContext!), centered);
-
-    await tester.pumpWidget(host(30, 0));
-    expect(shareAnchorFor(key.currentContext!), centered);
   });
 }

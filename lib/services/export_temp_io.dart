@@ -8,9 +8,9 @@ Future<Directory> _exportCacheDirectory() async => Directory(
 );
 
 /// Write [bytes] under a unique directory in the app-scoped cache and return
-/// its path. Unique directories isolate concurrent shares. Files survive the
-/// share call because desktop share targets may read them after its future
-/// completes; reclamation belongs to OS cache management.
+/// its path. Unique directories isolate concurrent shares. No app code deletes
+/// these files after sharing: desktop consumers may read them after the plugin
+/// future completes.
 Future<String> writeTempExportFile(Uint8List bytes, String fileName) async {
   final root = await _exportCacheDirectory();
   await root.create(recursive: true);

@@ -111,36 +111,32 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     appBar: AppBar(
       title: Text(session.name.isEmpty ? untitledSessionName : session.name),
       actions: [
-        Builder(
-          builder: (menuContext) => PopupMenuButton<String>(
-            onSelected: (action) => unawaited(
-              _onMenuAction(action, session, menuContext: menuContext),
+        PopupMenuButton<String>(
+          onSelected: (action) => unawaited(_onMenuAction(action, session)),
+          itemBuilder: (_) => [
+            const PopupMenuItem(value: 'rename', child: Text('Rename')),
+            const PopupMenuItem(value: 'notes', child: Text('Edit notes')),
+            PopupMenuItem(
+              value: 'download_csv',
+              enabled: _loadState is _Ready,
+              child: const Text('Download CSV'),
             ),
-            itemBuilder: (_) => [
-              const PopupMenuItem(value: 'rename', child: Text('Rename')),
-              const PopupMenuItem(value: 'notes', child: Text('Edit notes')),
-              PopupMenuItem(
-                value: 'download_csv',
-                enabled: _loadState is _Ready,
-                child: const Text('Download CSV'),
+            PopupMenuItem(
+              value: 'share_csv',
+              enabled: _loadState is _Ready && fileShareSupportedHere,
+              child: Text(
+                'Share CSV'
+                '${fileShareSupportedHere ? '' : ' (not supported here)'}',
               ),
-              PopupMenuItem(
-                value: 'share_csv',
-                enabled: _loadState is _Ready && fileShareSupportedHere,
-                child: Text(
-                  'Share CSV'
-                  '${fileShareSupportedHere ? '' : ' (not supported here)'}',
-                ),
+            ),
+            PopupMenuItem(
+              value: 'delete',
+              child: Text(
+                'Delete',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
-              PopupMenuItem(
-                value: 'delete',
-                child: Text(
-                  'Delete',
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ],
     ),
@@ -289,14 +285,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Builder(
-                    builder: (buttonContext) => OutlinedButton.icon(
-                      onPressed: fileShareSupportedHere
-                          ? () => _shareCsv(session, data, buttonContext)
-                          : null,
-                      icon: const Icon(Icons.share),
-                      label: const Text('Share CSV'),
-                    ),
+                  child: OutlinedButton.icon(
+                    onPressed: fileShareSupportedHere
+                        ? () => _shareCsv(session, data)
+                        : null,
+                    icon: const Icon(Icons.share),
+                    label: const Text('Share CSV'),
                   ),
                 ),
               ],
@@ -309,11 +303,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     );
   }
 
-  Future<void> _onMenuAction(
-    String action,
-    SessionSummary session, {
-    required BuildContext menuContext,
-  }) async {
+  Future<void> _onMenuAction(String action, SessionSummary session) async {
     try {
       switch (action) {
         case 'rename':
@@ -328,7 +318,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         case 'share_csv':
           final state = _loadState;
           if (state is _Ready) {
-            await _shareCsv(session, state.data, menuContext);
+            await _shareCsv(session, state.data);
           }
         case 'delete':
           await _deleteAndPop(session);
@@ -381,14 +371,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   Future<void> _exportCsv(
     SessionSummary session,
     SessionData data,
-    BuildContext sourceContext,
     ExportDelivery deliver,
   ) => runExportAction(context, () async {
     final generator = context.read<AppMeta>().generator;
     final unit = await _pickExportUnit(session.displayUnit);
-    if (unit == null || !sourceContext.mounted) return null;
+    if (unit == null || !context.mounted) return null;
     return deliver(
-      sourceContext,
       buildSessionCsvArtifact(
         sessionName: session.name,
         recordedAtIso: session.recordedAt,
@@ -402,18 +390,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   }, errorTitle: 'CSV export');
 
   Future<void> _downloadCsv(SessionSummary session, SessionData data) =>
-      _exportCsv(
-        session,
-        data,
-        context,
-        downloadDelivery('Download session CSV'),
-      );
+      _exportCsv(session, data, downloadDelivery('Download session CSV'));
 
-  Future<void> _shareCsv(
-    SessionSummary session,
-    SessionData data,
-    BuildContext sourceContext,
-  ) => _exportCsv(session, data, sourceContext, shareDelivery('Share CSV'));
+  Future<void> _shareCsv(SessionSummary session, SessionData data) =>
+      _exportCsv(session, data, shareDelivery('Share CSV', context));
 
   /// Ask the user for the export's converted unit (one file, one unit,
   /// chosen by the user), preselected to [initial].

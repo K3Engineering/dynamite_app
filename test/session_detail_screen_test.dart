@@ -2,13 +2,10 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:material_ui/material_ui.dart';
-import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:share_plus_platform_interface/share_plus_platform_interface.dart';
 
-import 'package:dynamite_app/models/app_meta.dart';
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
 import 'package:dynamite_app/models/session_catalog.dart';
@@ -23,7 +20,6 @@ import 'package:dynamite_app/widgets/empty_placeholder.dart';
 import 'package:dynamite_app/widgets/graph_components.dart';
 
 import 'helpers/session_data_fixture.dart';
-import 'support/export_platform_fakes.dart';
 
 /// Widget tests for the Session detail screen: a healthy session renders
 /// its stats; a session whose data decodes to no honest view renders the
@@ -37,25 +33,14 @@ void main() {
 
   late Directory tmp;
   late IoSessionFilesBackend backend;
-  final originalSharePlatform = SharePlatform.instance;
-  final originalPathProvider = PathProviderPlatform.instance;
-  // Install this before SharePlus.instance's one-time platform capture. Each
-  // test resets the same recorder, so several share flows can run in one file.
-  final sharePlatform = RecordingSharePlatform();
-  SharePlatform.instance = sharePlatform;
-
-  tearDownAll(() => SharePlatform.instance = originalSharePlatform);
 
   setUp(() {
     tmp = Directory.systemTemp.createTempSync('detail_screen_test');
     backend = IoSessionFilesBackend('${tmp.path}/sessions');
     SessionStore.instance = SessionStore.over(backend);
-    sharePlatform.reset();
-    PathProviderPlatform.instance = TestPathProviderPlatform(tmp.path);
   });
   tearDown(() {
     SessionStore.instance = null;
-    PathProviderPlatform.instance = originalPathProvider;
     tmp.deleteSync(recursive: true);
   });
 
@@ -112,9 +97,6 @@ void main() {
           ChangeNotifierProvider<AppSettings>.value(
             value: AppSettings(prefs: prefs),
           ),
-          Provider<AppMeta>.value(
-            value: const AppMeta(version: '1.0.0', buildNumber: '1'),
-          ),
         ],
         child: MaterialApp(home: SessionDetailScreen(session: session)),
       ),
@@ -137,60 +119,6 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(milliseconds: 1));
   }
-
-  Future<void> settleShare(WidgetTester tester) async {
-    for (var i = 0; i < 100 && sharePlatform.calls.isEmpty; i++) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 10)),
-      );
-      await tester.pump();
-    }
-    expect(sharePlatform.calls, hasLength(1));
-  }
-
-  testWidgets('Share CSV uses the pressed button as the share anchor', (
-    tester,
-  ) async {
-    const id = '2026-08-28T14-30-12-aaa0';
-    await seedSession(tester, id, codec.pack(2, (s, ch) => s));
-    await pumpDetail(tester, id);
-
-    await tester.ensureVisible(
-      find.widgetWithText(OutlinedButton, 'Share CSV'),
-    );
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Share CSV'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Export'));
-    await tester.pumpAndSettle();
-    await settleShare(tester);
-
-    expect(
-      sharePlatform.calls.single.sharePositionOrigin,
-      tester.getRect(find.widgetWithText(OutlinedButton, 'Share CSV')),
-    );
-    await unmount(tester);
-  });
-
-  testWidgets('app-bar Share CSV anchors to the menu button', (tester) async {
-    const id = '2026-08-28T14-30-12-aaa0';
-    await seedSession(tester, id, codec.pack(2, (s, ch) => s));
-    await pumpDetail(tester, id);
-
-    await tester.tap(find.byType(PopupMenuButton<String>));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(PopupMenuItem<String>, 'Share CSV'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Export'));
-    await tester.pumpAndSettle();
-    await settleShare(tester);
-
-    expect(
-      sharePlatform.calls.single.sharePositionOrigin,
-      tester.getRect(find.byType(PopupMenuButton<String>)),
-    );
-    expect(sharePlatform.calls.single.downloadFallbackEnabled, isFalse);
-    await unmount(tester);
-  });
 
   testWidgets('a healthy session renders its stats', (tester) async {
     const id = '2026-08-28T14-30-12-aaa0';

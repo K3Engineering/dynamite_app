@@ -92,15 +92,11 @@ class CalibrationScreen extends StatelessWidget {
 
     /// Build the report artifact and hand it to one delivery path
     /// (download or share), surfacing the outcome as a snackbar.
-    void deliver(BuildContext sourceContext, ExportDelivery delivery) =>
-        runExportAction(
-          context,
-          () => delivery(
-            sourceContext,
-            calibrationReportArtifact(report, deviceLabel: label),
-          ),
-          errorTitle: 'Report export',
-        );
+    void deliver(ExportDelivery delivery) => runExportAction(
+      context,
+      () => delivery(calibrationReportArtifact(report, deviceLabel: label)),
+      errorTitle: 'Report export',
+    );
 
     return Row(
       children: [
@@ -117,27 +113,22 @@ class CalibrationScreen extends StatelessWidget {
         const SizedBox(width: 12),
         Expanded(
           child: OutlinedButton.icon(
-            onPressed: () => deliver(
-              context,
-              downloadDelivery('Download calibration report'),
-            ),
+            onPressed: () =>
+                deliver(downloadDelivery('Download calibration report')),
             icon: const Icon(Icons.download),
             label: const Text('Download'),
           ),
         ),
         const SizedBox(width: 12),
         Expanded(
-          child: Builder(
-            builder: (buttonContext) => OutlinedButton.icon(
-              onPressed: fileShareSupportedHere
-                  ? () => deliver(
-                      buttonContext,
-                      shareDelivery('Share calibration report'),
-                    )
-                  : null,
-              icon: const Icon(Icons.share),
-              label: const Text('Share'),
-            ),
+          child: OutlinedButton.icon(
+            onPressed: fileShareSupportedHere
+                ? () => deliver(
+                    shareDelivery('Share calibration report', context),
+                  )
+                : null,
+            icon: const Icon(Icons.share),
+            label: const Text('Share'),
           ),
         ),
       ],
