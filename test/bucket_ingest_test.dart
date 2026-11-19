@@ -8,9 +8,9 @@ import 'package:dynamite_app/models/channel_calibration.dart';
 import 'package:dynamite_app/models/gap_list.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/data_hub.dart';
-import 'package:dynamite_app/services/live_session_writer.dart';
 import 'package:dynamite_app/services/session_data.dart';
-import 'package:dynamite_app/services/session_preparation.dart';
+
+import 'helpers/session_data_fixture.dart';
 
 /// Round-trip channel storage through data.raw so this tests the same fused
 /// preparation path used when the application opens a recording.
@@ -18,25 +18,16 @@ SessionData replaySession({
   required List<Int32List> channels,
   required GapList gaps,
   required int sampleRate,
-}) {
-  final count = channels.first.length;
-  final codec = SessionChunkCodec(channels.length);
-  final bytes = codec.pack(count, (s, ch) => channels[ch][s]);
-  codec.fillGapSentinels(bytes, gaps.rangesIn(0, count));
-  return SessionData.fromPrepared(
-    prepared: decodeAndPrepareSession(
-      codec: codec,
-      bytes: bytes,
-      calibrations: List.filled(
-        channels.length,
-        const ChannelCalibration(board: null),
-      ),
-    ),
-    sampleRate: sampleRate,
-    tares: List.filled(channels.length, 0.0),
-    ssnOrigin: 0,
-  );
-}
+}) => sessionDataFixture(
+  channels: channels,
+  sampleRate: sampleRate,
+  calibrations: List.filled(
+    channels.length,
+    const ChannelCalibration(board: null),
+  ),
+  tares: List.filled(channels.length, 0.0),
+  gaps: gaps,
+);
 
 /// Locks the live/session ingest mirror: DataHub's streaming ingest and
 /// SessionData's load-time pass must produce byte-identical value and diff

@@ -52,7 +52,6 @@ class SessionStore {
     const SessionCatalogLoading(),
   );
   final FutureChain _opQueue = FutureChain();
-  Future<void>? _initialCatalogLoad;
 
   /// The session the store's own writer is recording, if any. Set and read only
   /// inside the operation queue, so it can't race a scan.
@@ -97,20 +96,20 @@ class SessionStore {
   }
 
   Future<void> ensureCatalogLoaded() {
-    // A failed future, not a sync throw, so callers can catch it uniformly.
-    if (_catalog.value case SessionCatalogFailed(:final error)) {
-      return Future.error(_catalogUnavailableError(error));
-    }
     if (_catalog.value is SessionCatalogReady) return Future.value();
-    return _initialCatalogLoad ??= _enqueue(_publishCatalog);
+    return _withCatalog<void>((_, _) async {});
   }
 
-  /// Re-read every session directory and republish. Also a Failed catalog's
+  /// Queue a re-scan after every earlier operation. Also a Failed catalog's
   /// only way back.
   Future<void> refreshCatalog() => _enqueue(_publishCatalog);
 
+  /// Runs on [_opQueue]. The scan is inline: awaiting a separately queued scan
+  /// here would wait on an operation behind this one.
   Future<SessionCatalog> _loadCatalogIfNeeded(SessionFilesBackend files) async {
-    if (_catalog.value is SessionCatalogLoading) await _publishCatalog(files);
+    if (_catalog.value is SessionCatalogLoading) {
+      await _publishCatalog(files);
+    }
     _requireCatalogAvailable();
     // A publish leaves the catalog Ready or throws; Failed threw above.
     return switch (_catalog.value) {
@@ -241,10 +240,18 @@ class SessionStore {
     });
   });
 
+  /// Publish after recording without requiring an available catalog first.
+  /// A delta is sufficient when Ready; Loading and Failed need a full scan.
+  Future<void> _refreshAfterRecording(SessionFilesBackend files, String id) =>
+      switch (_catalog.value) {
+        SessionCatalogReady() => _refreshCatalogEntry(files, id),
+        _ => _publishCatalog(files),
+      };
+
   /// Write the completion marker (the only write of it anywhere).
   /// finalizeSession calls this after its count check passed; anything else
-  /// gets [abortSession].
-  Future<void> touchFinal(String id) => _withCatalog((files, _) async {
+  /// gets [abortSession]. Catalog failure cannot veto the marker or cleanup.
+  Future<void> touchFinal(String id) => _enqueue((files) async {
     try {
       await files.touchFinal(id);
     } finally {
@@ -253,15 +260,15 @@ class SessionStore {
       _liveSessionId = null;
       _liveBytes = 0;
     }
-    await _refreshCatalogEntry(files, id);
+    await _refreshAfterRecording(files, id);
   });
 
-  /// The writer latched a failure: [id] gets no marker. Drops ownership and
-  /// splices the fresh (interrupted) verdict in.
-  Future<void> abortSession(String id) => _withCatalog((files, _) async {
+  /// The writer latched a failure: [id] gets no marker. Drops ownership even
+  /// when the catalog is unavailable, then publishes the interrupted verdict.
+  Future<void> abortSession(String id) => _enqueue((files) async {
     _liveSessionId = null;
     _liveBytes = 0;
-    await _refreshCatalogEntry(files, id);
+    await _refreshAfterRecording(files, id);
   });
 
   // -- Listing and load ------------------------------------------------------
@@ -369,30 +376,42 @@ class SessionStore {
 
   /// Read a session back: strict journal, whole frames from data.raw, sentinel
   /// runs becoming [SessionData.gaps]. Anything malformed throws.
-  Future<SessionData> loadSession(String id) => _withCatalog((files, _) async {
-    final journalBytes = await files.readJournal(id);
-    if (journalBytes == null) {
-      throw StateError('loadSession: no journal for session $id');
+  void _requireSessionLoadable(
+    SessionCatalog catalog,
+    String id,
+    String operation,
+  ) {
+    if (catalog.session(id) == null) {
+      throw StateError('$operation: session $id is unavailable or damaged');
     }
-    final journal = parseSessionJournal(journalBytes);
-    final meta = journal.meta;
-    final data = await files.readData(id);
-    if (data == null) {
-      throw StateError('loadSession: no data for session $id');
-    }
-    final prepared = decodeAndPrepareSession(
-      codec: SessionChunkCodec(meta.channelCount),
-      bytes: data,
-      calibrations: meta.calibration,
-    );
-    return SessionData.fromPrepared(
-      prepared: prepared,
-      sampleRate: meta.sampleRate,
-      tares: meta.tares,
-      ssnOrigin: meta.ssnOrigin,
-      deviceKvs: meta.deviceKvs,
-    );
-  });
+  }
+
+  Future<SessionData> loadSession(String id) =>
+      _withCatalog((files, catalog) async {
+        _requireSessionLoadable(catalog, id, 'loadSession');
+        final journalBytes = await files.readJournal(id);
+        if (journalBytes == null) {
+          throw StateError('loadSession: no journal for session $id');
+        }
+        final journal = parseSessionJournal(journalBytes);
+        final meta = journal.meta;
+        final data = await files.readData(id);
+        if (data == null) {
+          throw StateError('loadSession: no data for session $id');
+        }
+        final prepared = decodeAndPrepareSession(
+          codec: SessionChunkCodec(meta.channelCount),
+          bytes: data,
+          calibrations: meta.calibration,
+        );
+        return SessionData.fromPrepared(
+          prepared: prepared,
+          sampleRate: meta.sampleRate,
+          tares: meta.tares,
+          ssnOrigin: meta.ssnOrigin,
+          deviceKvs: meta.deviceKvs,
+        );
+      });
 
   /// data.raw's bytes verbatim, for the damaged entry's hand-recovery export.
   /// Throws when absent. Rides the queue only for ordering against mutations.
@@ -421,7 +440,8 @@ class SessionStore {
   Future<void> editSession(
     String id,
     SessionEdit Function(SessionEdit current) update,
-  ) => _withCatalog((files, _) async {
+  ) => _withCatalog((files, catalog) async {
+    _requireSessionLoadable(catalog, id, 'editSession');
     final journalBytes = await files.readJournal(id);
     if (journalBytes == null) {
       throw StateError('editSession: no journal for session $id');
@@ -525,7 +545,11 @@ class SessionStore {
     }
     if (error != null) {
       if (run != null) {
-        await abortSession(run.id);
+        try {
+          await abortSession(run.id);
+        } catch (_) {
+          // Cleanup's catalog error must not replace the recording failure.
+        }
       }
       // Not `throw error`: only_throw_errors bans throwing Object?. Latched
       // writer errors are StateErrors with no trace to preserve anyway.

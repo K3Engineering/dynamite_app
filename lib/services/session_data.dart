@@ -61,28 +61,6 @@ class SessionData implements GraphDataSource {
   /// live hub uses.
   final List<BucketAccumulator> _diffBuckets;
 
-  /// Prepare a session from callers that already hold decoded channel arrays.
-  /// The recording store instead uses [fromPrepared] after its fused decoder.
-  new({
-    required List<Int32List> channels,
-    required int sampleRate,
-    required List<ChannelCalibration> calibrations,
-    required List<double?> tares,
-    required int ssnOrigin,
-    KvsSnapshot? deviceKvs,
-    GapList? gaps,
-  }) : this.fromPrepared(
-         prepared: prepareSessionChannels(
-           channels: channels,
-           calibrations: calibrations,
-           gaps: gaps ?? GapList(),
-         ),
-         sampleRate: sampleRate,
-         tares: tares,
-         ssnOrigin: ssnOrigin,
-         deviceKvs: deviceKvs,
-       );
-
   /// Assemble the graph source after [decodeAndPrepareSession] has built its
   /// channel-derived state. This constructor deliberately does no sample work.
   new fromPrepared({
@@ -134,7 +112,7 @@ class SessionData implements GraphDataSource {
 
   @override
   UnitAvailability get unitAvailability =>
-      resolveUnitAvailability(calibrationFor);
+      resolveUnitAvailability(calibrations);
 
   @override
   ChannelConverter converterFor(int channelIndex) =>

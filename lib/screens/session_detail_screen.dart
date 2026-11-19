@@ -52,12 +52,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     unawaited(_loadData());
   }
 
-  @override
-  void dispose() {
-    _graphCtrl.dispose();
-    super.dispose();
-  }
-
   Future<void> _loadData() async {
     try {
       final data = await SessionStore.instance.loadSession(widget.session.id);
@@ -67,6 +61,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       if (!mounted) return;
       setState(() => _loadState = _Failed(e));
     }
+  }
+
+  @override
+  void dispose() {
+    _graphCtrl.dispose();
+    super.dispose();
   }
 
   @override
@@ -113,17 +113,18 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       title: Text(session.name.isEmpty ? untitledSessionName : session.name),
       actions: [
         PopupMenuButton<String>(
-          onSelected: (action) => _onMenuAction(action, session),
+          onSelected: (action) => unawaited(_onMenuAction(action, session)),
           itemBuilder: (_) => [
             const PopupMenuItem(value: 'rename', child: Text('Rename')),
             const PopupMenuItem(value: 'notes', child: Text('Edit notes')),
-            const PopupMenuItem(
+            PopupMenuItem(
               value: 'download_csv',
-              child: Text('Download CSV'),
+              enabled: _loadState is _Ready,
+              child: const Text('Download CSV'),
             ),
             PopupMenuItem(
               value: 'share_csv',
-              enabled: fileShareSupportedHere,
+              enabled: _loadState is _Ready && fileShareSupportedHere,
               child: Text(
                 'Share CSV'
                 '${fileShareSupportedHere ? '' : ' (not supported here)'}',
@@ -172,7 +173,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             labels: channelLabels,
             activeChannels: visibleChannels,
             onToggleChannel: (index) => unawaited(
-              SessionStore.instance.toggleVisibleChannel(session.id, index),
+              SessionStore.instance
+                  .toggleVisibleChannel(session.id, index)
+                  .catchError(_showActionError),
             ),
             unit: unit,
             rows: [
@@ -302,23 +305,36 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   }
 
   Future<void> _onMenuAction(String action, SessionSummary session) async {
-    switch (action) {
-      case 'rename':
-        await _showRenameDialog(session);
-      case 'notes':
-        await _showNotesDialog(session);
-      case 'download_csv':
-        final state = _loadState;
-        if (state is _Ready) {
-          await _downloadCsv(session, state.data);
-        }
-      case 'share_csv':
-        final state = _loadState;
-        if (state is _Ready) {
-          await _shareCsv(session, state.data);
-        }
-      case 'delete':
-        await _deleteAndPop(session);
+    try {
+      switch (action) {
+        case 'rename':
+          await _showRenameDialog(session);
+        case 'notes':
+          await _showNotesDialog(session);
+        case 'download_csv':
+          final state = _loadState;
+          if (state is _Ready) {
+            await _downloadCsv(session, state.data);
+          }
+        case 'share_csv':
+          final state = _loadState;
+          if (state is _Ready) {
+            await _shareCsv(session, state.data);
+          }
+        case 'delete':
+          await _deleteAndPop(session);
+      }
+    } catch (error) {
+      _showActionError(error);
+    }
+  }
+
+  void _showActionError(Object error) {
+    if (mounted) {
+      showErrorSnackBar(
+        ScaffoldMessenger.of(context),
+        'Session action failed: $error',
+      );
     }
   }
 

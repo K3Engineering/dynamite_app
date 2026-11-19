@@ -16,6 +16,8 @@ import 'package:dynamite_app/services/csv_export.dart';
 import 'package:dynamite_app/services/session_data.dart';
 import 'package:dynamite_app/services/session_metadata.dart';
 
+import 'helpers/session_data_fixture.dart';
+
 /// A parsed YAML node tree as plain Dart maps/lists, for deep comparison
 /// against the metadata object (`loadYaml` yields `YamlMap`/`YamlList`,
 /// which don't value-compare against plain collections).
@@ -76,7 +78,7 @@ void main() {
     GapList? gaps,
     int ssnOrigin = 0,
     KvsSnapshot? deviceKvs,
-  }) => SessionData(
+  }) => sessionDataFixture(
     channels: [for (final values in perChannel) Int32List.fromList(values)],
     sampleRate: sampleRate,
     calibrations: calibrations ?? nominalCals(),
@@ -420,8 +422,8 @@ ssn,ch0,ch1,ch0_kgf,ch1_kgf
       final gaps = GapList()..append(1, 2); // half-open: only sample 1
       final data = makeSession(
         [
-          [10, 20, 30],
-          [40, 50, 60],
+          [10, 10, 30],
+          [40, 40, 60],
         ],
         gaps: gaps,
         ssnOrigin: 41230,
@@ -574,8 +576,8 @@ ssn,ch0,ch1,ch0_kgf,ch1_kgf
     test('every unit, nominal board, fractional tares, a gap row', () {
       final data = makeSession(
         [
-          [1000, -2000, 300000, 5],
-          [400000, 6, 7, 8],
+          [1000, -2000, 300000, 300000],
+          [400000, 6, 7, 7],
         ],
         calibrations: [
           for (int ch = 0; ch < channels; ch++)

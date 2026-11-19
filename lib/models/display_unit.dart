@@ -1,7 +1,6 @@
 import 'dart:math' as math;
 
 import 'channel_calibration.dart';
-import 'device_profile.dart';
 
 /// One rung of a unit's SI-prefix axis ladder: [factor] base units equal one
 /// rung unit (1e-3 mV per µV, 1e3 kgf per tf); [symbol] is the axis-label
@@ -15,17 +14,13 @@ typedef UnitAvailability = ({
   bool anyChannelHasLoadCell,
 });
 
-/// Resolve availability for the calibration set behind [calibrationFor]. Board
-/// data is all-or-nothing per board, so channel 0 stands in for it. Channel
-/// visibility is not an input.
+/// Resolve availability for [calibrations]. Board data is all-or-nothing per
+/// board, so channel 0 stands in for it. Channel visibility is not an input.
 UnitAvailability resolveUnitAvailability(
-  ChannelCalibration Function(int channel) calibrationFor,
+  List<ChannelCalibration> calibrations,
 ) => (
-  boardHasNominals: calibrationFor(0).board != null,
-  anyChannelHasLoadCell: [
-    for (int i = 0; i < kAdcChannelCount; i++)
-      if (calibrationFor(i).loadCell != null) i,
-  ].isNotEmpty,
+  boardHasNominals: calibrations.first.board != null,
+  anyChannelHasLoadCell: calibrations.any((cal) => cal.loadCell != null),
 );
 
 /// Supported force and electrical display units: presentation metadata only;

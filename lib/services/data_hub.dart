@@ -558,8 +558,9 @@ class DataHub extends ChangeNotifier
   );
 
   @override
-  UnitAvailability get unitAvailability =>
-      resolveUnitAvailability(calibrationFor);
+  UnitAvailability get unitAvailability => resolveUnitAvailability([
+    for (int ch = 0; ch < kAdcChannelCount; ch++) calibrationFor(ch),
+  ]);
 
   @override
   int get calibrationVersion => _calibrationVersion;

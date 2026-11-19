@@ -19,6 +19,8 @@ import 'package:dynamite_app/services/session_store.dart';
 import 'package:dynamite_app/widgets/empty_placeholder.dart';
 import 'package:dynamite_app/widgets/graph_components.dart';
 
+import 'helpers/session_data_fixture.dart';
+
 /// Widget tests for the Session detail screen: a healthy session renders
 /// its stats; a session whose data decodes to no honest view renders the
 /// error placeholder (which offers no salvage — the Sessions list's
@@ -131,13 +133,12 @@ void main() {
 
     await tester.tap(find.byType(PopupMenuButton<String>));
     await tester.pumpAndSettle();
-    expect(
-      find.ancestor(
-        of: find.text('Download CSV'),
-        matching: find.byType(PopupMenuItem<String>),
-      ),
-      findsOneWidget,
+    final downloadItem = find.ancestor(
+      of: find.text('Download CSV'),
+      matching: find.byType(PopupMenuItem<String>),
     );
+    expect(downloadItem, findsOneWidget);
+    expect(tester.widget<PopupMenuItem<String>>(downloadItem).enabled, isTrue);
     expect(find.text('Delete'), findsOneWidget);
     await tester.tapAt(const Offset(10, 10));
     await tester.pumpAndSettle();
@@ -146,12 +147,11 @@ void main() {
   });
 
   testWidgets('empty SessionData renders an empty graph', (tester) async {
-    final data = SessionData(
+    final data = sessionDataFixture(
       channels: [for (var ch = 0; ch < channels; ch++) Int32List(0)],
       sampleRate: 1000,
       calibrations: meta().calibration,
       tares: meta().tares,
-      ssnOrigin: 0,
     );
     await tester.pumpWidget(
       MaterialApp(
@@ -174,7 +174,7 @@ void main() {
   testWidgets('swapping static SessionData resets viewport and tile caches', (
     tester,
   ) async {
-    SessionData sessionOf(int count, int rawValue) => SessionData(
+    SessionData sessionOf(int count, int rawValue) => sessionDataFixture(
       channels: [
         for (var ch = 0; ch < channels; ch++)
           Int32List(count)..fillRange(0, count, rawValue),
@@ -182,7 +182,6 @@ void main() {
       sampleRate: 1000,
       calibrations: meta().calibration,
       tares: meta().tares,
-      ssnOrigin: 0,
     );
 
     final ctrl = GraphController(isLiveSource: false);
@@ -247,6 +246,16 @@ void main() {
     expect(find.byType(EmptyPlaceholder), findsOneWidget);
     expect(find.text('Error loading session'), findsOneWidget);
     expect(find.byIcon(Icons.error_outline), findsOneWidget);
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    final downloadItem = find.ancestor(
+      of: find.text('Download CSV'),
+      matching: find.byType(PopupMenuItem<String>),
+    );
+    expect(tester.widget<PopupMenuItem<String>>(downloadItem).enabled, isFalse);
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
 
     await unmount(tester);
   });

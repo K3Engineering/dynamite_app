@@ -19,6 +19,8 @@ import 'package:dynamite_app/services/session_journal.dart';
 import 'package:dynamite_app/services/session_store.dart';
 import 'package:dynamite_app/services/session_store_backend.dart';
 
+import 'helpers/session_data_fixture.dart';
+
 /// Storage-side session tests: the live writer (snapshot latch, backpressure,
 /// ssn origin), finalize's ack-length check and interrupted verdicts, and
 /// the file store's listing/damage/edit verdicts. Every test runs against
@@ -115,14 +117,13 @@ void main() {
   }
 
   group('SessionData.channelExtremes', () {
-    SessionData makeSession(List<int> values) => SessionData(
+    SessionData makeSession(List<int> values) => sessionDataFixture(
       channels: [
         for (int ch = 0; ch < channels; ch++) Int32List.fromList(values),
       ],
       sampleRate: 1000,
       calibrations: nominalCals(),
       tares: List.filled(channels, 0.0),
-      ssnOrigin: 0,
     );
 
     test('a never-positive channel reports its true (negative) peaks', () {
@@ -469,6 +470,75 @@ void main() {
       expect(listed.sessions.single.interrupted, isTrue);
       expect(listed.damaged, isEmpty);
       expect(await failing.isFinalized(writer.sessionId!), isFalse);
+    });
+
+    test(
+      'a failed catalog does not block finalization or retain live bytes',
+      () async {
+        final failing = _FaultBackend(
+          IoSessionFilesBackend('${tmp.path}/sessions'),
+        );
+        SessionStore.instance = store = SessionStore.over(failing);
+        final hub = DataHub();
+        hub.notePacketCounter(0);
+        final frame = Int32List(channels);
+        for (int i = 0; i < 1100; i++) {
+          hub.addSampleFrame(frame);
+        }
+        final writer = startFromHub(hub, name: 'catalog failed');
+        await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
+
+        failing.failNextListings = 1;
+        await expectLater(store.refreshCatalog(), throwsStateError);
+        await SessionStore.instance.finalizeSession(writer: writer);
+
+        final listed = readyCatalog();
+        expect(await failing.isFinalized(writer.sessionId!), isTrue);
+        expect(listed.sessions.single.interrupted, isFalse);
+        expect(await store.usedBytes(), listed.totalBytes);
+      },
+    );
+
+    test('abort preserves the recording error and releases a failed-catalog session', () async {
+      final failing = _FaultBackend(
+        IoSessionFilesBackend('${tmp.path}/sessions'),
+      );
+      SessionStore.instance = store = SessionStore.over(failing);
+      final hub = DataHub();
+      hub.notePacketCounter(0);
+      final frame = Int32List(channels);
+      for (int i = 0; i < 1100; i++) {
+        hub.addSampleFrame(frame);
+      }
+      final writer = startFromHub(hub, name: 'abort failed');
+      await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
+
+      failing.failNextListings = 1;
+      await expectLater(store.refreshCatalog(), throwsStateError);
+      failing
+        ..failTouchFinal = true
+        ..failListings = true;
+
+      await expectLater(
+        () => SessionStore.instance.finalizeSession(writer: writer),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('marker write failed'),
+          ),
+        ),
+      );
+      expect(store.catalog.value, isA<SessionCatalogFailed>());
+
+      // Recovery must see the interrupted recording, not an id still hidden
+      // as live, and its bytes must not also remain in the live total.
+      failing.failListings = false;
+      await store.refreshCatalog();
+      final listed = readyCatalog();
+      expect(listed.sessions.single.id, writer.sessionId);
+      expect(listed.sessions.single.interrupted, isTrue);
+      expect(await store.usedBytes(), listed.totalBytes);
     });
 
     test('an intact multi-packet recording finalizes with no error', () async {
@@ -1009,6 +1079,21 @@ void main() {
         expect(await backend.isFinalized('2026-08-28T14-30-12-0dd0'), isFalse);
         expect((await catalog()).damaged, hasLength(1));
         expect((await catalog()).sessions, isEmpty);
+        await expectLater(
+          store.loadSession('2026-08-28T14-30-12-0dd0'),
+          throwsStateError,
+        );
+        final journalBefore = await backend.readJournal(
+          '2026-08-28T14-30-12-0dd0',
+        );
+        await expectLater(
+          store.renameSession('2026-08-28T14-30-12-0dd0', 'invalid edit'),
+          throwsStateError,
+        );
+        expect(
+          await backend.readJournal('2026-08-28T14-30-12-0dd0'),
+          journalBefore,
+        );
       },
     );
 
@@ -1146,6 +1231,7 @@ void main() {
       expect(damaged, hasLength(1));
       expect(damaged.single.id, 'junk');
       expect(damaged.single.reason, contains('malformed'));
+      await expectLater(store.loadSession('junk'), throwsStateError);
     });
 
     test('frame-aligned but undecodable data pins the classify/load split: '
