@@ -7,6 +7,7 @@ import '../models/damaged_session.dart';
 import '../models/session_catalog.dart';
 import '../models/session_summary.dart';
 import '../services/export_delivery.dart';
+import '../services/export_names.dart';
 import '../services/session_store.dart';
 import '../services/storage_probe.dart';
 import '../utils/format.dart';
@@ -177,10 +178,10 @@ class _SessionsTabState extends State<SessionsTab> {
             return _DamagedCard(
               damaged: damaged[index],
               onExportSamples: damaged[index].hasData
-                  ? () => _exportDamaged(damaged[index], data: true)
+                  ? () => _exportDamagedSamples(damaged[index])
                   : null,
               onExportMetadata: damaged[index].hasMeta
-                  ? () => _exportDamaged(damaged[index], data: false)
+                  ? () => _exportDamagedMetadata(damaged[index])
                   : null,
               onDelete: () =>
                   _deleteSession(damaged[index].id, damaged[index].id),
@@ -219,26 +220,33 @@ class _SessionsTabState extends State<SessionsTab> {
     }
   }
 
+  Future<void> _exportDamagedSamples(DamagedSession damaged) => _exportDamaged(
+    fileName: exportFileNameFor(damaged.id, 'data.raw', fallback: 'damaged'),
+    dialogTitle: 'Export samples (raw)',
+    readBytes: () => SessionStore.instance.rawDataBytes(damaged.id),
+  );
+
+  Future<void> _exportDamagedMetadata(DamagedSession damaged) => _exportDamaged(
+    fileName: exportFileNameFor(damaged.id, 'meta', fallback: 'damaged'),
+    dialogTitle: 'Export metadata (raw)',
+    readBytes: () => SessionStore.instance.rawJournalBytes(damaged.id),
+  );
+
   /// Hand a damaged entry's surviving bytes to the user, verbatim, named
   /// from the directory id.
-  Future<void> _exportDamaged(
-    DamagedSession damaged, {
-    required bool data,
-  }) async {
-    final fileName = '${damaged.id}.${data ? 'data.raw' : 'meta'}';
-    final dialogTitle = data ? 'Export samples (raw)' : 'Export metadata (raw)';
-    await runExportAction(
-      context,
-      () async => downloadExport(
-        bytes: data
-            ? await SessionStore.instance.rawDataBytes(damaged.id)
-            : await SessionStore.instance.rawJournalBytes(damaged.id),
-        fileName: fileName,
-        dialogTitle: dialogTitle,
-      ),
-      errorTitle: dialogTitle,
-    );
-  }
+  Future<void> _exportDamaged({
+    required String fileName,
+    required String dialogTitle,
+    required Future<Uint8List> Function() readBytes,
+  }) => runExportAction(
+    context,
+    () async => downloadExport((
+      bytes: await readBytes(),
+      fileName: fileName,
+      mimeType: 'application/octet-stream',
+    ), dialogTitle: dialogTitle),
+    errorTitle: dialogTitle,
+  );
 }
 
 class _SessionCard extends StatelessWidget {

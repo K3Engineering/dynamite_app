@@ -25,7 +25,7 @@ String calibrationReportFileName(String deviceLabel) => exportFileNameFor(
   String report, {
   required String deviceLabel,
 }) => (
-  bytes: Uint8List.fromList(utf8.encode(report)),
+  bytes: utf8.encode(report),
   fileName: calibrationReportFileName(deviceLabel),
   mimeType: 'text/plain',
 );

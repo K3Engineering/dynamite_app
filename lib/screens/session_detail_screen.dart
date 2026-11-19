@@ -14,7 +14,6 @@ import '../services/csv_export.dart';
 import '../services/export_delivery.dart';
 import '../services/session_data.dart';
 import '../services/session_store.dart';
-import '../services/share_capability.dart';
 import '../utils/format.dart';
 import '../widgets/channel_stats_table.dart';
 import '../widgets/dialogs.dart';
@@ -374,9 +373,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     SessionData data,
     ExportDelivery deliver,
   ) => runExportAction(context, () async {
-    final appMeta = context.read<AppMeta>();
+    final generator = context.read<AppMeta>().generator;
     final unit = await _pickExportUnit(session.displayUnit);
-    if (unit == null) return null;
+    if (unit == null || !context.mounted) return null;
     return deliver(
       buildSessionCsvArtifact(
         sessionName: session.name,
@@ -384,7 +383,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         deviceInfo: session.deviceInfo,
         data: data,
         unit: unit,
-        appMeta: appMeta,
+        generator: generator,
         interrupted: session.interrupted,
       ),
     );
@@ -394,11 +393,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       _exportCsv(session, data, downloadDelivery('Download session CSV'));
 
   Future<void> _shareCsv(SessionSummary session, SessionData data) =>
-      _exportCsv(
-        session,
-        data,
-        shareDelivery('Share CSV', anchor: fullScreenShareAnchor(context)),
-      );
+      _exportCsv(session, data, shareDelivery('Share CSV', context));
 
   /// Ask the user for the export's converted unit (one file, one unit,
   /// chosen by the user), preselected to [initial].

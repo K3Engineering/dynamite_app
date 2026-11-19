@@ -5,7 +5,6 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:dynamite_app/models/app_meta.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/device_info.dart';
 import 'package:dynamite_app/models/display_unit.dart';
@@ -462,7 +461,7 @@ void main() {
       deviceInfo: const {},
       data: loaded,
       unit: .raw,
-      appMeta: const AppMeta(version: '1.0.0', buildNumber: '1'),
+      generator: 'dynamite-flutter 1.0.0',
     );
     final body = utf8
         .decode(csv.bytes)

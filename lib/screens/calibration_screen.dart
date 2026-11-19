@@ -6,7 +6,6 @@ import '../models/board_calibration.dart';
 import '../services/ble_link_manager.dart';
 import '../services/export_delivery.dart';
 import '../services/report_export.dart';
-import '../services/share_capability.dart';
 import '../services/rig_state.dart';
 import '../widgets/calibration_text.dart';
 import '../widgets/calibration_view.dart';
@@ -125,10 +124,7 @@ class CalibrationScreen extends StatelessWidget {
           child: OutlinedButton.icon(
             onPressed: fileShareSupportedHere
                 ? () => deliver(
-                    shareDelivery(
-                      'Share calibration report',
-                      anchor: fullScreenShareAnchor(context),
-                    ),
+                    shareDelivery('Share calibration report', context),
                   )
                 : null,
             icon: const Icon(Icons.share),
