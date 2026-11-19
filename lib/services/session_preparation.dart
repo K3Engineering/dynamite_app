@@ -9,7 +9,7 @@ import 'live_session_writer.dart';
 /// retained with it because bucket mV/V sums and SessionData's unit converters
 /// must use the same board maps.
 class PreparedSessionData {
-  const new({
+  const new _({
     required this.channels,
     required this.calibrations,
     required this.gaps,
@@ -87,7 +87,7 @@ class _AggregateBuilder {
   }
 
   PreparedSessionData complete(List<Int32List> channels, GapList gaps) =>
-      PreparedSessionData(
+      PreparedSessionData._(
         channels: channels,
         calibrations: calibrations,
         gaps: gaps,
@@ -111,6 +111,13 @@ PreparedSessionData decodeAndPrepareSession({
   required Uint8List bytes,
   required List<ChannelCalibration> calibrations,
 }) {
+  if (codec.channelCount <= 0) {
+    throw ArgumentError.value(
+      codec.channelCount,
+      'codec.channelCount',
+      'must be positive',
+    );
+  }
   if (calibrations.length != codec.channelCount) {
     throw ArgumentError.value(
       calibrations.length,

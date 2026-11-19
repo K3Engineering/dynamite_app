@@ -28,6 +28,13 @@ class GapList {
     return lo.isOdd; // odd insertion point => last bound <= i was a start
   }
 
+  /// Every stored range, in ascending order, without clamping.
+  Iterable<(int, int)> get ranges sync* {
+    for (int k = 0; k < _bounds.length; k += 2) {
+      yield (_bounds[k], _bounds[k + 1]);
+    }
+  }
+
   /// The gap ranges overlapping `[start, end)`, clamped to it.
   Iterable<(int, int)> rangesIn(int start, int end) sync* {
     for (int k = 0; k < _bounds.length; k += 2) {

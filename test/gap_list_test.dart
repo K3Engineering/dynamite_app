@@ -74,6 +74,13 @@ void main() {
       expect(g.rangesIn(0, 100).toList(), [(10, 12), (20, 21)]);
     });
 
+    test('ranges returns the stored bounds without clamping', () {
+      final g = GapList()
+        ..append(10, 20)
+        ..append(30, 40);
+      expect(g.ranges.toList(), [(10, 20), (30, 40)]);
+    });
+
     test('rangesIn clamps overlapping ranges', () {
       final g = GapList()
         ..append(10, 20)

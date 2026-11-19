@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -9,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
 import 'package:dynamite_app/models/session_catalog.dart';
+import 'package:dynamite_app/models/session_summary.dart';
 import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/services/session_data.dart';
 import 'package:dynamite_app/screens/session_detail_screen.dart';
@@ -16,6 +18,7 @@ import 'package:dynamite_app/services/live_session_writer.dart';
 import 'package:dynamite_app/services/session_files_io.dart';
 import 'package:dynamite_app/services/session_journal.dart';
 import 'package:dynamite_app/services/session_store.dart';
+import 'package:dynamite_app/services/session_store_backend.dart';
 import 'package:dynamite_app/widgets/empty_placeholder.dart';
 import 'package:dynamite_app/widgets/graph_components.dart';
 
@@ -69,6 +72,25 @@ void main() {
     recordedAt: '2026-07-29T14:05:32.000Z',
     ssnOrigin: 0,
   );
+
+  SessionSummary summary(String id) {
+    final m = meta();
+    return SessionSummary(
+      id: id,
+      name: m.name,
+      notes: '',
+      createdAt: DateTime.utc(2026, 8, 28, 14, 30, 12),
+      durationMs: 2,
+      channelCount: m.channelCount,
+      sampleRate: m.sampleRate,
+      displayUnit: m.displayUnit,
+      deviceInfo: m.deviceInfo,
+      recordedAt: m.recordedAt,
+      channelLabels: m.channelLabels,
+      visibleChannels: m.visibleChannels,
+      interrupted: false,
+    );
+  }
 
   // Everything store-side is real dart:io, which the fake-async
   // testWidgets event loop starves; runAsync hands it the real loop.
@@ -133,13 +155,12 @@ void main() {
 
     await tester.tap(find.byType(PopupMenuButton<String>));
     await tester.pumpAndSettle();
-    expect(
-      find.ancestor(
-        of: find.text('Download CSV'),
-        matching: find.byType(PopupMenuItem<String>),
-      ),
-      findsOneWidget,
+    final downloadItem = find.ancestor(
+      of: find.text('Download CSV'),
+      matching: find.byType(PopupMenuItem<String>),
     );
+    expect(downloadItem, findsOneWidget);
+    expect(tester.widget<PopupMenuItem<String>>(downloadItem).enabled, isTrue);
     expect(find.text('Delete'), findsOneWidget);
     await tester.tapAt(const Offset(10, 10));
     await tester.pumpAndSettle();
@@ -232,6 +253,44 @@ void main() {
     await unmount(tester);
   });
 
+  testWidgets(
+    'a failed catalog without a data builder handles the load error',
+    (tester) async {
+      final backend = Completer<SessionFilesBackend>();
+      final failedStore = SessionStore.overFuture(backend.future);
+      SessionStore.instance = failedStore;
+      final catalogLoad = failedStore.ensureCatalogLoaded();
+      backend.completeError(StateError('backend unavailable'));
+      await tester.runAsync(() => expectLater(catalogLoad, throwsStateError));
+      expect(failedStore.catalog.value, isA<SessionCatalogFailed>());
+
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<AppSettings>.value(
+              value: AppSettings(prefs: prefs),
+            ),
+          ],
+          child: MaterialApp(
+            home: SessionDetailScreen(
+              session: summary('2026-08-28T14-30-12-fail'),
+            ),
+          ),
+        ),
+      );
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+
+      expect(find.text('Error loading sessions'), findsNWidgets(2));
+      expect(tester.takeException(), isNull);
+      await unmount(tester);
+    },
+  );
+
   testWidgets('an undecodable session renders the error placeholder', (
     tester,
   ) async {
@@ -247,6 +306,16 @@ void main() {
     expect(find.byType(EmptyPlaceholder), findsOneWidget);
     expect(find.text('Error loading session'), findsOneWidget);
     expect(find.byIcon(Icons.error_outline), findsOneWidget);
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    final downloadItem = find.ancestor(
+      of: find.text('Download CSV'),
+      matching: find.byType(PopupMenuItem<String>),
+    );
+    expect(tester.widget<PopupMenuItem<String>>(downloadItem).enabled, isFalse);
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
 
     await unmount(tester);
   });

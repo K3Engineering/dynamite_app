@@ -48,7 +48,20 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     _catalog = SessionStore.instance.catalog;
     // Loading through the store also ensures the catalog is available. Cache
     // the future so catalog edits don't reload samples or reset the graph.
-    _data = SessionStore.instance.loadSession(widget.session.id);
+    // The catalog can keep FutureBuilder unmounted when this rejects; ignore()
+    // suppresses only unhandled-error reporting, not FutureBuilder's errors.
+    _data = SessionStore.instance.loadSession(widget.session.id)..ignore();
+  }
+
+  @override
+  void didUpdateWidget(covariant SessionDetailScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.session.id != widget.session.id) {
+      throw StateError(
+        'SessionDetailScreen needs a fresh State for a new session id; '
+        'key the widget by session id',
+      );
+    }
   }
 
   @override
@@ -108,13 +121,14 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             itemBuilder: (_) => [
               const PopupMenuItem(value: 'rename', child: Text('Rename')),
               const PopupMenuItem(value: 'notes', child: Text('Edit notes')),
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: 'download_csv',
-                child: Text('Download CSV'),
+                enabled: snapshot.hasData,
+                child: const Text('Download CSV'),
               ),
               PopupMenuItem(
                 value: 'share_csv',
-                enabled: fileShareSupportedHere,
+                enabled: snapshot.hasData && fileShareSupportedHere,
                 child: Text(
                   'Share CSV'
                   '${fileShareSupportedHere ? '' : ' (not supported here)'}',

@@ -75,7 +75,18 @@ class SessionData implements GraphDataSource {
        gaps = prepared.gaps,
        _extremes = prepared.extremes,
        _valueBuckets = prepared.valueBuckets,
-       _diffBuckets = prepared.diffBuckets;
+       _diffBuckets = prepared.diffBuckets {
+    if (sampleRate <= 0) {
+      throw ArgumentError.value(sampleRate, 'sampleRate', 'must be positive');
+    }
+    if (tares.length != channels.length) {
+      throw ArgumentError.value(
+        tares.length,
+        'tares',
+        'must contain one entry per data channel (${channels.length})',
+      );
+    }
+  }
 
   // -- GraphDataSource --------------------------------------------------------
 

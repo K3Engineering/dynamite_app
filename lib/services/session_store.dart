@@ -110,7 +110,9 @@ class SessionStore {
   Future<void> refreshCatalog() => _enqueue(_publishCatalog);
 
   Future<SessionCatalog> _loadCatalogIfNeeded(SessionFilesBackend files) async {
-    if (_catalog.value is SessionCatalogLoading) await _publishCatalog(files);
+    if (_catalog.value is SessionCatalogLoading) {
+      await (_initialCatalogLoad ??= _publishCatalog(files));
+    }
     _requireCatalogAvailable();
     // A publish leaves the catalog Ready or throws; Failed threw above.
     return switch (_catalog.value) {
@@ -369,7 +371,13 @@ class SessionStore {
 
   /// Read a session back: strict journal, whole frames from data.raw, sentinel
   /// runs becoming [SessionData.gaps]. Anything malformed throws.
-  Future<SessionData> loadSession(String id) => _withCatalog((files, _) async {
+  Future<SessionData> loadSession(String id) => _withCatalog((
+    files,
+    catalog,
+  ) async {
+    if (catalog.session(id) == null) {
+      throw StateError('loadSession: session $id is unavailable or damaged');
+    }
     final journalBytes = await files.readJournal(id);
     if (journalBytes == null) {
       throw StateError('loadSession: no journal for session $id');

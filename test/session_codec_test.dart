@@ -55,6 +55,17 @@ void main() {
     });
   });
 
+  test('preparation rejects a zero-channel codec before frame arithmetic', () {
+    expect(
+      () => decodeAndPrepareSession(
+        codec: const SessionChunkCodec(0),
+        bytes: Uint8List(0),
+        calibrations: const [],
+      ),
+      throwsArgumentError,
+    );
+  });
+
   group('gap sentinels', () {
     final frames = [
       [10, 20, 30, 40],

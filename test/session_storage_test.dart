@@ -859,6 +859,32 @@ void main() {
       expect(await backend.listDirIds(), isEmpty);
     });
 
+    test('a session load shares its in-flight catalog scan', () async {
+      const id = '2026-08-29T09-00-00-scan';
+      final failing = _FaultBackend(backend);
+      SessionStore.instance = store = SessionStore.over(failing);
+      await seedSession(id);
+
+      var scans = 0;
+      final firstScan = Completer<void>();
+      final releaseScan = Completer<void>();
+      failing.onListDirIds = () async {
+        scans++;
+        if (scans == 1) {
+          firstScan.complete();
+          await releaseScan.future;
+        }
+      };
+
+      final load = store.loadSession(id);
+      await firstScan.future;
+      final ensure = store.ensureCatalogLoaded();
+      releaseScan.complete();
+      await ensure;
+      expect((await load).sampleCount, 2);
+      expect(scans, 1);
+    });
+
     test('a backend construction failure fails the catalog loudly', () async {
       final backend = Completer<SessionFilesBackend>();
       SessionStore.instance = store = SessionStore.overFuture(backend.future);
@@ -1010,6 +1036,10 @@ void main() {
         expect(await backend.isFinalized('2026-08-28T14-30-12-0dd0'), isFalse);
         expect((await catalog()).damaged, hasLength(1));
         expect((await catalog()).sessions, isEmpty);
+        await expectLater(
+          store.loadSession('2026-08-28T14-30-12-0dd0'),
+          throwsStateError,
+        );
       },
     );
 
@@ -1147,6 +1177,7 @@ void main() {
       expect(damaged, hasLength(1));
       expect(damaged.single.id, 'junk');
       expect(damaged.single.reason, contains('malformed'));
+      await expectLater(store.loadSession('junk'), throwsStateError);
     });
 
     test('frame-aligned but undecodable data pins the classify/load split: '
@@ -1454,6 +1485,8 @@ class _FaultBackend implements SessionFilesBackend {
   /// finalize-time interrupted-verdict test.
   bool failTouchFinal = false;
 
+  Future<void> Function()? onListDirIds;
+
   @override
   Future<SessionDataSink> createSession(
     String id,
@@ -1470,11 +1503,12 @@ class _FaultBackend implements SessionFilesBackend {
   }
 
   @override
-  Future<List<String>> listDirIds() {
+  Future<List<String>> listDirIds() async {
     if (failListings || failNextListings > 0) {
       if (failNextListings > 0) failNextListings--;
       throw StateError('listing failed');
     }
+    await onListDirIds?.call();
     return inner.listDirIds();
   }
 
