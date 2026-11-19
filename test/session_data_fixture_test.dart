@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/channel_calibration.dart';
 import 'package:dynamite_app/models/gap_list.dart';
+import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/services/session_data.dart';
 
 import 'helpers/session_data_fixture.dart';
@@ -39,12 +40,79 @@ void main() {
     );
   });
 
-  test('passes out-of-bounds gaps to the codec without clamping them', () {
+  test('rejects out-of-bounds gaps without clamping them', () {
     expect(() => buildFixture(gaps: GapList()..append(3, 4)), throwsRangeError);
   });
 
   test('rejects an invalid sample rate or tare count', () {
     expect(() => buildFixture(sampleRate: 0), throwsArgumentError);
     expect(() => buildFixture(tares: const []), throwsArgumentError);
+    for (final tare in [double.nan, double.infinity, double.negativeInfinity]) {
+      expect(() => buildFixture(tares: [tare]), throwsArgumentError);
+    }
+  });
+
+  test('rejects gap samples that do not hold the preceding value', () {
+    expect(
+      () => buildFixture(
+        channels: [
+          Int32List.fromList([10, 20]),
+        ],
+        gaps: GapList()..append(1, 2),
+      ),
+      throwsArgumentError,
+    );
+  });
+
+  test('unit availability uses the actual channel count', () {
+    expect(buildFixture().unitAvailability, (
+      boardHasNominals: false,
+      anyChannelHasLoadCell: false,
+    ));
+
+    final fiveChannelData = sessionDataFixture(
+      channels: [
+        for (var ch = 0; ch < 5; ch++) Int32List.fromList([0]),
+      ],
+      sampleRate: 1000,
+      calibrations: [
+        for (var ch = 0; ch < 5; ch++)
+          ChannelCalibration(
+            board: null,
+            loadCell: ch == 4
+                ? const LoadCellProfile(capacityKg: 100, sensitivityMvV: 2)
+                : null,
+          ),
+      ],
+      tares: List.filled(5, null),
+    );
+    expect(fiveChannelData.unitAvailability, (
+      boardHasNominals: false,
+      anyChannelHasLoadCell: true,
+    ));
+  });
+
+  test('loaded data snapshots mutable list arguments', () {
+    final channels = [
+      Int32List.fromList([1, 2, 3]),
+    ];
+    final calibrations = [const ChannelCalibration(board: null)];
+    final tares = <double?>[null];
+    final data = sessionDataFixture(
+      channels: channels,
+      sampleRate: 1000,
+      calibrations: calibrations,
+      tares: tares,
+    );
+
+    channels.clear();
+    calibrations.clear();
+    tares[0] = 10;
+    expect(data.channels, hasLength(1));
+    expect(data.calibrations, hasLength(1));
+    expect(data.tares, [null]);
+    expect(data.channels.clear, throwsUnsupportedError);
+    expect(data.calibrations.clear, throwsUnsupportedError);
+    expect(data.tares.clear, throwsUnsupportedError);
   });
 }

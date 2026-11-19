@@ -40,18 +40,20 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   bool _showDerivative = false;
 
   late final ValueListenable<SessionCatalogState> _catalog;
-  late final Future<SessionData> _data;
+
+  /// Created on the first Ready catalog, then cached across catalog edits.
+  Future<SessionData>? _data;
 
   @override
   void initState() {
     super.initState();
     _catalog = SessionStore.instance.catalog;
-    // Loading through the store also ensures the catalog is available. Cache
-    // the future so catalog edits don't reload samples or reset the graph.
-    // The catalog can keep FutureBuilder unmounted when this rejects; ignore()
-    // suppresses only unhandled-error reporting, not FutureBuilder's errors.
-    _data = SessionStore.instance.loadSession(widget.session.id)..ignore();
+    unawaited(SessionStore.instance.ensureCatalogLoaded().catchError((_) {}));
   }
+
+  Future<SessionData> _loadData() =>
+      // A catalog error can keep FutureBuilder unmounted when this rejects.
+      SessionStore.instance.loadSession(widget.session.id)..ignore();
 
   @override
   void didUpdateWidget(covariant SessionDetailScreen oldWidget) {
@@ -91,7 +93,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           SessionCatalogReady(:final catalog) => switch (catalog.session(
             widget.session.id,
           )) {
-            final session? => _buildSession(settings, session),
+            final session? => _buildSession(
+              settings,
+              session,
+              _data ??= _loadData(),
+            ),
             null => Scaffold(
               appBar: AppBar(title: const Text('Session unavailable')),
               body: const EmptyPlaceholder(
@@ -108,9 +114,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   Widget _buildSession(
     AppSettings settings,
-    SessionSummary session,
-  ) => FutureBuilder<SessionData>(
-    future: _data,
+    SessionSummary session, [
+    Future<SessionData>? data,
+  ]) => FutureBuilder<SessionData>(
+    future: data,
     builder: (context, snapshot) => Scaffold(
       appBar: AppBar(
         title: Text(session.name.isEmpty ? untitledSessionName : session.name),

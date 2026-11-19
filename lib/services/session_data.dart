@@ -66,11 +66,12 @@ class SessionData implements GraphDataSource {
   new fromPrepared({
     required PreparedSessionData prepared,
     required this.sampleRate,
-    required this.tares,
+    required List<double?> tares,
     required this.ssnOrigin,
     this.deviceKvs,
-  }) : channels = prepared.channels,
-       calibrations = prepared.calibrations,
+  }) : channels = List.unmodifiableOf(prepared.channels),
+       calibrations = List.unmodifiableOf(prepared.calibrations),
+       tares = List.unmodifiableOf(tares),
        sampleCount = prepared.sampleCount,
        gaps = prepared.gaps,
        _extremes = prepared.extremes,
@@ -85,6 +86,12 @@ class SessionData implements GraphDataSource {
         'tares',
         'must contain one entry per data channel (${channels.length})',
       );
+    }
+    for (int ch = 0; ch < tares.length; ch++) {
+      final tare = tares[ch];
+      if (tare != null && !tare.isFinite) {
+        throw ArgumentError.value(tare, 'tares[$ch]', 'must be finite or null');
+      }
     }
   }
 
@@ -123,7 +130,7 @@ class SessionData implements GraphDataSource {
 
   @override
   UnitAvailability get unitAvailability =>
-      resolveUnitAvailability(calibrationFor);
+      resolveUnitAvailability(calibrations);
 
   @override
   ChannelConverter converterFor(int channelIndex) =>

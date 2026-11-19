@@ -859,7 +859,7 @@ void main() {
       expect(await backend.listDirIds(), isEmpty);
     });
 
-    test('a session load shares its in-flight catalog scan', () async {
+    test('session load, ensure, and refresh share one initial scan', () async {
       const id = '2026-08-29T09-00-00-scan';
       final failing = _FaultBackend(backend);
       SessionStore.instance = store = SessionStore.over(failing);
@@ -876,12 +876,15 @@ void main() {
         }
       };
 
+      // Issue these back-to-back: neither the backend hop nor the first scan
+      // has run when ensure and refresh are requested.
       final load = store.loadSession(id);
-      await firstScan.future;
       final ensure = store.ensureCatalogLoaded();
+      final refresh = store.refreshCatalog();
+      await firstScan.future;
       releaseScan.complete();
-      await ensure;
-      expect((await load).sampleCount, 2);
+      await Future.wait([ensure, refresh]).timeout(const Duration(seconds: 5));
+      expect((await load.timeout(const Duration(seconds: 5))).sampleCount, 2);
       expect(scans, 1);
     });
 
@@ -1039,6 +1042,17 @@ void main() {
         await expectLater(
           store.loadSession('2026-08-28T14-30-12-0dd0'),
           throwsStateError,
+        );
+        final journalBefore = await backend.readJournal(
+          '2026-08-28T14-30-12-0dd0',
+        );
+        await expectLater(
+          store.renameSession('2026-08-28T14-30-12-0dd0', 'invalid edit'),
+          throwsStateError,
+        );
+        expect(
+          await backend.readJournal('2026-08-28T14-30-12-0dd0'),
+          journalBefore,
         );
       },
     );

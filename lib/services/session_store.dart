@@ -52,7 +52,6 @@ class SessionStore {
     const SessionCatalogLoading(),
   );
   final FutureChain _opQueue = FutureChain();
-  Future<void>? _initialCatalogLoad;
 
   /// The session the store's own writer is recording, if any. Set and read only
   /// inside the operation queue, so it can't race a scan.
@@ -102,16 +101,20 @@ class SessionStore {
       return Future.error(_catalogUnavailableError(error));
     }
     if (_catalog.value is SessionCatalogReady) return Future.value();
-    return _initialCatalogLoad ??= _enqueue(_publishCatalog);
+    return _withCatalog<void>((_, _) async {});
   }
 
   /// Re-read every session directory and republish. Also a Failed catalog's
-  /// only way back.
-  Future<void> refreshCatalog() => _enqueue(_publishCatalog);
+  /// only way back. An initial scan already in the queue satisfies the refresh.
+  Future<void> refreshCatalog() => _catalog.value is SessionCatalogLoading
+      ? ensureCatalogLoaded()
+      : _enqueue(_publishCatalog);
 
+  /// Runs on [_opQueue]. The scan is inline: awaiting a separately queued scan
+  /// here would wait on an operation behind this one.
   Future<SessionCatalog> _loadCatalogIfNeeded(SessionFilesBackend files) async {
     if (_catalog.value is SessionCatalogLoading) {
-      await (_initialCatalogLoad ??= _publishCatalog(files));
+      await _publishCatalog(files);
     }
     _requireCatalogAvailable();
     // A publish leaves the catalog Ready or throws; Failed threw above.
@@ -371,36 +374,42 @@ class SessionStore {
 
   /// Read a session back: strict journal, whole frames from data.raw, sentinel
   /// runs becoming [SessionData.gaps]. Anything malformed throws.
-  Future<SessionData> loadSession(String id) => _withCatalog((
-    files,
-    catalog,
-  ) async {
+  void _requireSessionLoadable(
+    SessionCatalog catalog,
+    String id,
+    String operation,
+  ) {
     if (catalog.session(id) == null) {
-      throw StateError('loadSession: session $id is unavailable or damaged');
+      throw StateError('$operation: session $id is unavailable or damaged');
     }
-    final journalBytes = await files.readJournal(id);
-    if (journalBytes == null) {
-      throw StateError('loadSession: no journal for session $id');
-    }
-    final journal = parseSessionJournal(journalBytes);
-    final meta = journal.meta;
-    final data = await files.readData(id);
-    if (data == null) {
-      throw StateError('loadSession: no data for session $id');
-    }
-    final prepared = decodeAndPrepareSession(
-      codec: SessionChunkCodec(meta.channelCount),
-      bytes: data,
-      calibrations: meta.calibration,
-    );
-    return SessionData.fromPrepared(
-      prepared: prepared,
-      sampleRate: meta.sampleRate,
-      tares: meta.tares,
-      ssnOrigin: meta.ssnOrigin,
-      deviceKvs: meta.deviceKvs,
-    );
-  });
+  }
+
+  Future<SessionData> loadSession(String id) =>
+      _withCatalog((files, catalog) async {
+        _requireSessionLoadable(catalog, id, 'loadSession');
+        final journalBytes = await files.readJournal(id);
+        if (journalBytes == null) {
+          throw StateError('loadSession: no journal for session $id');
+        }
+        final journal = parseSessionJournal(journalBytes);
+        final meta = journal.meta;
+        final data = await files.readData(id);
+        if (data == null) {
+          throw StateError('loadSession: no data for session $id');
+        }
+        final prepared = decodeAndPrepareSession(
+          codec: SessionChunkCodec(meta.channelCount),
+          bytes: data,
+          calibrations: meta.calibration,
+        );
+        return SessionData.fromPrepared(
+          prepared: prepared,
+          sampleRate: meta.sampleRate,
+          tares: meta.tares,
+          ssnOrigin: meta.ssnOrigin,
+          deviceKvs: meta.deviceKvs,
+        );
+      });
 
   /// data.raw's bytes verbatim, for the damaged entry's hand-recovery export.
   /// Throws when absent. Rides the queue only for ordering against mutations.
@@ -429,7 +438,8 @@ class SessionStore {
   Future<void> editSession(
     String id,
     SessionEdit Function(SessionEdit current) update,
-  ) => _withCatalog((files, _) async {
+  ) => _withCatalog((files, catalog) async {
+    _requireSessionLoadable(catalog, id, 'editSession');
     final journalBytes = await files.readJournal(id);
     if (journalBytes == null) {
       throw StateError('editSession: no journal for session $id');

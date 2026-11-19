@@ -291,6 +291,51 @@ void main() {
     },
   );
 
+  testWidgets('a recovered catalog starts a fresh session load', (
+    tester,
+  ) async {
+    const id = '2026-08-28T14-30-12-ccc0';
+    await seedSession(tester, id, codec.pack(2, (s, ch) => s));
+    final recoveringBackend = _FailFirstListingBackend(backend);
+    final recoveringStore = SessionStore.over(recoveringBackend);
+    SessionStore.instance = recoveringStore;
+
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AppSettings>.value(
+            value: AppSettings(prefs: prefs),
+          ),
+        ],
+        child: MaterialApp(home: SessionDetailScreen(session: summary(id))),
+      ),
+    );
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump();
+    expect(find.text('Error loading sessions'), findsNWidgets(2));
+
+    recoveringBackend.failListings = false;
+    await tester.runAsync(recoveringStore.refreshCatalog);
+    for (var i = 0; i < 100; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+      if (find.byType(CircularProgressIndicator).evaluate().isEmpty) break;
+    }
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('Error loading session'), findsNothing);
+    expect(find.text('Detail session'), findsOneWidget);
+    expect(find.text('Samples'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await unmount(tester);
+  });
+
   testWidgets('an undecodable session renders the error placeholder', (
     tester,
   ) async {
@@ -319,4 +364,50 @@ void main() {
 
     await unmount(tester);
   });
+}
+
+class _FailFirstListingBackend implements SessionFilesBackend {
+  new(this.inner);
+
+  final IoSessionFilesBackend inner;
+  bool failListings = true;
+
+  @override
+  Future<List<String>> listDirIds() {
+    if (failListings) throw StateError('listing unavailable');
+    return inner.listDirIds();
+  }
+
+  @override
+  Future<SessionDataSink> createSession(
+    String id,
+    Uint8List metaBytes,
+    Uint8List firstData,
+  ) => inner.createSession(id, metaBytes, firstData);
+
+  @override
+  Future<Uint8List?> readJournal(String id) => inner.readJournal(id);
+
+  @override
+  Future<Uint8List?> readData(String id) => inner.readData(id);
+
+  @override
+  Future<int> dataByteLength(String id) => inner.dataByteLength(id);
+
+  @override
+  Future<bool> isFinalized(String id) => inner.isFinalized(id);
+
+  @override
+  Future<void> touchFinal(String id) => inner.touchFinal(id);
+
+  @override
+  Future<void> truncateJournal(String id, int bytes) =>
+      inner.truncateJournal(id, bytes);
+
+  @override
+  Future<void> appendJournal(String id, Uint8List bytes) =>
+      inner.appendJournal(id, bytes);
+
+  @override
+  Future<void> delete(String id) => inner.delete(id);
 }
