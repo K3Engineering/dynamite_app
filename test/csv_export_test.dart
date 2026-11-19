@@ -120,6 +120,23 @@ void main() {
       csv.trim().split('\n').skipWhile((l) => l.startsWith('#')).toList();
 
   group('buildSessionCsvArtifact', () {
+    test('packages the sanitized session name and CSV MIME type', () {
+      final artifact = buildSessionCsvArtifact(
+        sessionName: 'con',
+        recordedAtIso: recordedAtIso,
+        deviceInfo: const {},
+        data: makeSession([
+          [1],
+          [2],
+        ]),
+        unit: DisplayUnit.kgf,
+        generator: generator,
+      );
+
+      expect(artifact.fileName, 'con_.csv');
+      expect(artifact.mimeType, 'text/csv');
+    });
+
     test('emits the full artifact byte-for-byte', () {
       final data = makeSession([
         [10, 20, 30],

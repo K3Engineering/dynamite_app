@@ -6,31 +6,15 @@ import 'package:path_provider/path_provider.dart';
 /// Writes [bytes] to a fresh temp file named [fileName] in the app's
 /// OS-purgeable cache area and returns its path.
 ///
-/// The export cache directory is swept before every write, so at most the
-/// in-flight export file lives there: previous exports' temp files can't
-/// accumulate if the app died between export and cleanup.
+/// Every share gets its own directory: desktop share sheets may read the
+/// path after share_plus's future completes, and concurrent shares must not
+/// overwrite or delete each other's files. Cleanup therefore belongs to the
+/// OS cache policy, not to completion of the Dart share call.
 Future<String> writeTempExportFile(Uint8List bytes, String fileName) async {
-  final dir = Directory('${(await getTemporaryDirectory()).path}/exports');
-  await dir.create(recursive: true);
-  // TODO(export): Investigate separate directories per export to isolate
-  // concurrent shares without losing crash-leftover cleanup.
-  await for (final stale in dir.list()) {
-    try {
-      await stale.delete();
-    } catch (_) {
-      // A file that can't be deleted (locked, raced) must not block export.
-    }
-  }
+  final root = Directory('${(await getTemporaryDirectory()).path}/exports');
+  await root.create(recursive: true);
+  final dir = await root.createTemp('share-');
   final file = File('${dir.path}/$fileName');
   await file.writeAsBytes(bytes, flush: true);
   return file.path;
-}
-
-/// Best-effort delete of a temp export file after the save/share flow has
-/// completed. Failures are ignored: the file is in the OS-purgeable cache
-/// area and the next [writeTempExportFile] sweep removes it anyway.
-Future<void> deleteTempExportFile(String path) async {
-  try {
-    await File(path).delete();
-  } catch (_) {}
 }

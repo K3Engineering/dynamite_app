@@ -8,6 +8,3 @@ import 'dart:typed_data';
 
 Future<String> writeTempExportFile(Uint8List bytes, String fileName) =>
     throw UnsupportedError('temp files do not exist on web');
-
-Future<void> deleteTempExportFile(String path) =>
-    throw UnsupportedError('temp files do not exist on web');

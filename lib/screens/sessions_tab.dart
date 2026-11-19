@@ -7,6 +7,7 @@ import '../models/damaged_session.dart';
 import '../models/session_catalog.dart';
 import '../models/session_summary.dart';
 import '../services/export_delivery.dart';
+import '../services/export_names.dart';
 import '../services/session_store.dart';
 import '../services/storage_probe.dart';
 import '../utils/format.dart';
@@ -220,13 +221,13 @@ class _SessionsTabState extends State<SessionsTab> {
   }
 
   Future<void> _exportDamagedSamples(DamagedSession damaged) => _exportDamaged(
-    fileName: '${damaged.id}.data.raw',
+    fileName: exportFileNameFor(damaged.id, 'data.raw', fallback: 'damaged'),
     dialogTitle: 'Export samples (raw)',
     readBytes: () => SessionStore.instance.rawDataBytes(damaged.id),
   );
 
   Future<void> _exportDamagedMetadata(DamagedSession damaged) => _exportDamaged(
-    fileName: '${damaged.id}.meta',
+    fileName: exportFileNameFor(damaged.id, 'meta', fallback: 'damaged'),
     dialogTitle: 'Export metadata (raw)',
     readBytes: () => SessionStore.instance.rawJournalBytes(damaged.id),
   );
@@ -239,11 +240,11 @@ class _SessionsTabState extends State<SessionsTab> {
     required Future<Uint8List> Function() readBytes,
   }) => runExportAction(
     context,
-    () async => downloadDelivery(dialogTitle)((
+    () async => downloadExport((
       bytes: await readBytes(),
       fileName: fileName,
       mimeType: 'application/octet-stream',
-    )),
+    ), dialogTitle: dialogTitle),
     errorTitle: dialogTitle,
   );
 }

@@ -124,10 +124,7 @@ class CalibrationScreen extends StatelessWidget {
           child: OutlinedButton.icon(
             onPressed: fileShareSupportedHere
                 ? () => deliver(
-                    shareDelivery(
-                      'Share calibration report',
-                      anchor: fullScreenShareAnchor(context),
-                    ),
+                    shareDelivery('Share calibration report', context),
                   )
                 : null,
             icon: const Icon(Icons.share),

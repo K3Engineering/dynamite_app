@@ -375,7 +375,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   ) => runExportAction(context, () async {
     final generator = context.read<AppMeta>().generator;
     final unit = await _pickExportUnit(session.displayUnit);
-    if (unit == null) return null;
+    if (unit == null || !context.mounted) return null;
     return deliver(
       buildSessionCsvArtifact(
         sessionName: session.name,
@@ -393,11 +393,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       _exportCsv(session, data, downloadDelivery('Download session CSV'));
 
   Future<void> _shareCsv(SessionSummary session, SessionData data) =>
-      _exportCsv(
-        session,
-        data,
-        shareDelivery('Share CSV', anchor: fullScreenShareAnchor(context)),
-      );
+      _exportCsv(session, data, shareDelivery('Share CSV', context));
 
   /// Ask the user for the export's converted unit (one file, one unit,
   /// chosen by the user), preselected to [initial].
