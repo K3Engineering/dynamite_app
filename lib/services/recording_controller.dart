@@ -159,6 +159,13 @@ class RecordingController extends ChangeNotifier {
 
   _RecordingLifecycle _lifecycle = const _Idle();
 
+  /// Outcome of the most recent finalized stop, whoever triggered it (the
+  /// caller, an external STOP, the storage-error or stream-death auto-stop).
+  /// Observers of a stop they didn't initiate read this to learn the
+  /// session's fate. Cleared when a new recording starts.
+  StopSessionResult? get lastStopResult => _lastStopResult;
+  StopSessionResult? _lastStopResult;
+
   DateTime? get sessionStartTime => switch (_lifecycle) {
     final _Recording r => r.startedAt,
     _ => null,
@@ -167,6 +174,11 @@ class RecordingController extends ChangeNotifier {
   /// True from a committed start until finalization completes, the stopping
   /// window included.
   bool get sessionInProgress => _lifecycle is! _Idle;
+
+  /// True only while samples still reach the writer. False through the
+  /// stopping window, where [sessionInProgress] is still true but appends are
+  /// dropped — a live detector must stop accumulating there.
+  bool get acceptingData => _lifecycle is _Recording;
 
   void _set(_RecordingLifecycle next) {
     _lifecycle = next;
@@ -224,6 +236,9 @@ class RecordingController extends ChangeNotifier {
       displayUnit: displayUnit,
       deviceInfo: Map.of(_deviceMetadataSnapshot()),
       deviceKvs: _deviceKvsSnapshot(),
+      // The rig's math setup, so review replays the derived channels the
+      // operator saw, not whatever is configured at load time.
+      mathProfile: _dataHub.mathProfile,
       recordedAt: iso8601WithOffset(startedAt),
     );
     final writer = SessionStore.instance.startSession(
@@ -234,6 +249,7 @@ class RecordingController extends ChangeNotifier {
       onWriteError: (_) => _autoStopOnStorageError(),
     );
     _onSessionBoundary();
+    _lastStopResult = null;
     _set(_Recording(writer: writer, name: sessionName, startedAt: startedAt));
     return const StartSessionOk();
   }
@@ -285,14 +301,17 @@ class RecordingController extends ChangeNotifier {
     if (error != null) {
       _events.emit(RecordingStorageError(error));
     }
-    _set(const _Idle());
     final sessionId = writer.sessionId;
-    if (error != null) {
-      return StopSessionFailed(error, name, sessionId: sessionId);
-    }
-    return sessionId == null
+    final result = error != null
+        ? StopSessionFailed(error, name, sessionId: sessionId)
+        : sessionId == null
         ? StopSessionNothingRecorded(name)
         : StopSessionSaved(sessionId, name);
+    // Latched before the idle notification: an observer woken by that change
+    // reads the outcome (see [lastStopResult]) — after it, nothing fires.
+    _lastStopResult = result;
+    _set(const _Idle());
+    return result;
   }
 
   /// Streams freshly decoded [HubBatchAppended] samples to the writer. A

@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../services/app_settings.dart';
 import '../services/data_hub.dart';
@@ -114,7 +115,12 @@ class _TareSheetState extends State<_TareSheet> {
     return ListenableBuilder(
       listenable: hub,
       builder: (context, _) {
-        final channels = widget.settings.activeChannelIndices;
+        // Tare is a hardware-channel concept: derived channels (which have
+        // no tare of their own) are out of scope here.
+        final channels = [
+          for (final ch in widget.settings.activeChannelIndices)
+            if (ch < kAdcChannelCount) ch,
+        ];
         final taring = hub.taring;
         return SafeArea(
           child: Padding(
