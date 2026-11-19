@@ -48,38 +48,33 @@ ExportDelivery downloadDelivery(String dialogTitle) =>
     (context, artifact) => downloadExport(artifact, dialogTitle: dialogTitle);
 
 /// [shareExport] as an [ExportDelivery], anchored to the invoking widget.
-ExportDelivery shareDelivery(
-  String dialogTitle, {
-  @visibleForTesting SharePlus? sharePlugin,
-}) =>
+ExportDelivery shareDelivery(String dialogTitle) =>
     (context, artifact) => shareExport(
       artifact,
       dialogTitle: dialogTitle,
       anchor: shareAnchorFor(context),
-      sharePlugin: sharePlugin,
     );
 
-/// The invoking widget's global bounds. A widget filling the view collapses
-/// to its center: a full-screen source leaves an iPad popover no free edge.
+/// The invoking widget's global bounds, clipped to the view. Async export
+/// flows can scroll or resize their source off-screen while a dialog is open;
+/// an invisible (or zero-sized) source anchors to the view's center instead.
 @visibleForTesting
 ShareAnchor shareAnchorFor(BuildContext context) {
   final box = context.findRenderObject();
   if (box is! RenderBox || !box.hasSize) {
     throw StateError('A share anchor needs a laid-out render box');
   }
-  final center = box.localToGlobal(box.size.center(Offset.zero));
-  final isFullView =
-      box.size.width >= MediaQuery.sizeOf(context).width &&
-      box.size.height >= MediaQuery.sizeOf(context).height;
-  if (isFullView) {
-    return (left: center.dx - 1, top: center.dy - 1, width: 2, height: 2);
-  }
-  final origin = box.localToGlobal(Offset.zero);
+  final view = Offset.zero & MediaQuery.sizeOf(context);
+  final source = box.localToGlobal(Offset.zero) & box.size;
+  final visible = source.intersect(view);
+  final anchor = visible.isEmpty
+      ? Rect.fromCenter(center: view.center, width: 2, height: 2)
+      : visible;
   return (
-    left: origin.dx,
-    top: origin.dy,
-    width: box.size.width,
-    height: box.size.height,
+    left: anchor.left,
+    top: anchor.top,
+    width: anchor.width,
+    height: anchor.height,
   );
 }
 
@@ -118,7 +113,6 @@ Future<String?> shareExport(
   ExportArtifact artifact, {
   required String dialogTitle,
   required ShareAnchor anchor,
-  @visibleForTesting SharePlus? sharePlugin,
 }) async {
   final XFile file;
   if (kIsWeb) {
@@ -131,25 +125,32 @@ Future<String?> shareExport(
       mimeType: artifact.mimeType,
     );
   }
-  final result = await (sharePlugin ?? SharePlus.instance).share(
-    ShareParams(
-      title: dialogTitle,
-      files: [file],
-      fileNameOverrides: [artifact.fileName],
-      sharePositionOrigin: Rect.fromLTWH(
-        anchor.left,
-        anchor.top,
-        anchor.width,
-        anchor.height,
+  try {
+    final result = await SharePlus.instance.share(
+      ShareParams(
+        title: dialogTitle,
+        files: [file],
+        fileNameOverrides: [artifact.fileName],
+        // An unsupported web share is an error, not a "Shared" snackbar for a
+        // download fallback whose data: URI cannot hold large session CSVs.
+        downloadFallbackEnabled: false,
+        sharePositionOrigin: Rect.fromLTWH(
+          anchor.left,
+          anchor.top,
+          anchor.width,
+          anchor.height,
+        ),
       ),
-    ),
-  );
-  return switch (result.status) {
-    ShareResultStatus.success => 'Shared ${artifact.fileName}',
-    // Backed out of the share sheet: null = the caller shows no snackbar.
-    ShareResultStatus.dismissed => null,
-    // The platform can't tell what happened; treat as shared.
-    ShareResultStatus.unavailable =>
-      'Shared ${artifact.fileName} (status unknown)',
-  };
+    );
+    return switch (result.status) {
+      ShareResultStatus.success => 'Shared ${artifact.fileName}',
+      // Backed out of the share sheet: null = the caller shows no snackbar.
+      ShareResultStatus.dismissed => null,
+      // The platform can't tell what happened; treat as shared.
+      ShareResultStatus.unavailable =>
+        'Shared ${artifact.fileName} (status unknown)',
+    };
+  } finally {
+    await releaseTempExportFile(file.path);
+  }
 }

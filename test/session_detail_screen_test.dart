@@ -37,21 +37,24 @@ void main() {
 
   late Directory tmp;
   late IoSessionFilesBackend backend;
-  late RecordingSharePlatform sharePlatform;
   final originalSharePlatform = SharePlatform.instance;
   final originalPathProvider = PathProviderPlatform.instance;
+  // Install this before SharePlus.instance's one-time platform capture. Each
+  // test resets the same recorder, so several share flows can run in one file.
+  final sharePlatform = RecordingSharePlatform();
+  SharePlatform.instance = sharePlatform;
+
+  tearDownAll(() => SharePlatform.instance = originalSharePlatform);
 
   setUp(() {
     tmp = Directory.systemTemp.createTempSync('detail_screen_test');
     backend = IoSessionFilesBackend('${tmp.path}/sessions');
     SessionStore.instance = SessionStore.over(backend);
-    sharePlatform = RecordingSharePlatform();
-    SharePlatform.instance = sharePlatform;
+    sharePlatform.reset();
     PathProviderPlatform.instance = TestPathProviderPlatform(tmp.path);
   });
   tearDown(() {
     SessionStore.instance = null;
-    SharePlatform.instance = originalSharePlatform;
     PathProviderPlatform.instance = originalPathProvider;
     tmp.deleteSync(recursive: true);
   });
@@ -135,6 +138,16 @@ void main() {
     await tester.pump(const Duration(milliseconds: 1));
   }
 
+  Future<void> settleShare(WidgetTester tester) async {
+    for (var i = 0; i < 100 && sharePlatform.calls.isEmpty; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+    expect(sharePlatform.calls, hasLength(1));
+  }
+
   testWidgets('Share CSV uses the pressed button as the share anchor', (
     tester,
   ) async {
@@ -149,18 +162,33 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Export'));
     await tester.pumpAndSettle();
-    for (var i = 0; i < 100 && sharePlatform.calls.isEmpty; i++) {
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 10)),
-      );
-      await tester.pump();
-    }
+    await settleShare(tester);
 
-    expect(sharePlatform.calls, hasLength(1));
     expect(
       sharePlatform.calls.single.sharePositionOrigin,
       tester.getRect(find.widgetWithText(OutlinedButton, 'Share CSV')),
     );
+    await unmount(tester);
+  });
+
+  testWidgets('app-bar Share CSV anchors to the menu button', (tester) async {
+    const id = '2026-08-28T14-30-12-aaa0';
+    await seedSession(tester, id, codec.pack(2, (s, ch) => s));
+    await pumpDetail(tester, id);
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(PopupMenuItem<String>, 'Share CSV'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Export'));
+    await tester.pumpAndSettle();
+    await settleShare(tester);
+
+    expect(
+      sharePlatform.calls.single.sharePositionOrigin,
+      tester.getRect(find.byType(PopupMenuButton<String>)),
+    );
+    expect(sharePlatform.calls.single.downloadFallbackEnabled, isFalse);
     await unmount(tester);
   });
 

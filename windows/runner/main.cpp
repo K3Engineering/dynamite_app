@@ -7,6 +7,23 @@
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
+  // A second process would sweep share-export files its first instance's
+  // Windows share sheet may still be reading.
+  HANDLE instance_mutex = ::CreateMutexW(
+      nullptr, TRUE, L"Local\\DynamiteSampler.SingleInstance");
+  if (instance_mutex == nullptr) {
+    return EXIT_FAILURE;
+  }
+  if (::GetLastError() == ERROR_ALREADY_EXISTS) {
+    if (HWND existing = ::FindWindowW(L"FLUTTER_RUNNER_WIN32_WINDOW",
+                                      L"dynamite_app")) {
+      ::ShowWindow(existing, SW_RESTORE);
+      ::SetForegroundWindow(existing);
+    }
+    ::CloseHandle(instance_mutex);
+    return EXIT_SUCCESS;
+  }
+
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.
   if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {
@@ -28,6 +45,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
   if (!window.Create(L"dynamite_app", origin, size)) {
+    ::CloseHandle(instance_mutex);
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);
@@ -38,6 +56,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
     ::DispatchMessage(&msg);
   }
 
+  ::CloseHandle(instance_mutex);
   ::CoUninitialize();
   return EXIT_SUCCESS;
 }

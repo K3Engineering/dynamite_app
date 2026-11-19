@@ -44,6 +44,11 @@ class RecordingSharePlatform extends SharePlatform {
   final calls = <ShareParams>[];
   ShareResultStatus status = ShareResultStatus.dismissed;
 
+  void reset() {
+    calls.clear();
+    status = ShareResultStatus.dismissed;
+  }
+
   @override
   Future<ShareResult> share(ShareParams params) async {
     calls.add(params);

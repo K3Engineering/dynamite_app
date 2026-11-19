@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
-import 'package:share_plus/share_plus.dart';
+import 'package:share_plus_platform_interface/share_plus_platform_interface.dart';
 
 import 'package:dynamite_app/services/export_delivery.dart';
 import 'package:dynamite_app/services/export_temp_io.dart';
@@ -18,34 +18,35 @@ void main() {
   const anchor = (left: 1.0, top: 2.0, width: 2.0, height: 2.0);
   final originalFilePicker = FilePickerPlatform.instance;
   final originalPathProvider = PathProviderPlatform.instance;
+  final originalSharePlatform = SharePlatform.instance;
+  // SharePlus.instance captures SharePlatform.instance on first use. Install
+  // one recording platform before that read, then reset it for every test.
+  final sharePlatform = RecordingSharePlatform();
+  SharePlatform.instance = sharePlatform;
   late TestFilePickerPlatform filePicker;
-  late RecordingSharePlatform sharePlatform;
-  late SharePlus sharePlugin;
   late Directory temp;
+
+  tearDownAll(() => SharePlatform.instance = originalSharePlatform);
 
   ExportArtifact newArtifact(List<int> bytes) => (
     bytes: Uint8List.fromList(bytes),
     fileName: 'session.csv',
     mimeType: 'text/csv',
   );
-  Future<String?> performShare(List<int> bytes) => shareExport(
-    newArtifact(bytes),
-    dialogTitle: 'Share CSV',
-    anchor: anchor,
-    sharePlugin: sharePlugin,
-  );
+  Future<String?> performShare(List<int> bytes) =>
+      shareExport(newArtifact(bytes), dialogTitle: 'Share CSV', anchor: anchor);
   Directory exportCache() => Directory('${temp.path}/dynamite_exports');
 
   setUp(() {
     temp = Directory.systemTemp.createTempSync('export_delivery_test');
     filePicker = TestFilePickerPlatform();
-    sharePlatform = RecordingSharePlatform();
-    sharePlugin = SharePlus.custom(sharePlatform);
+    sharePlatform.reset();
     FilePickerPlatform.instance = filePicker;
     PathProviderPlatform.instance = TestPathProviderPlatform(temp.path);
   });
 
   tearDown(() {
+    debugDefaultTargetPlatformOverride = null;
     FilePickerPlatform.instance = originalFilePicker;
     PathProviderPlatform.instance = originalPathProvider;
     temp.deleteSync(recursive: true);
@@ -71,7 +72,6 @@ void main() {
 
   test('downloadExport formats the native file Uri as a local path', () async {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     filePicker.result = Uri.file(r'C:\Temp\my session.csv', windows: true);
 
     final result = await downloadExport(
@@ -95,8 +95,9 @@ void main() {
   });
 
   test(
-    'native shares keep independent app-cache files after completing',
+    'desktop shares keep independent app-cache files after completing',
     () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
       await performShare([1, 2, 3]);
       await performShare([4, 5, 6]);
 
@@ -111,6 +112,7 @@ void main() {
       for (final call in sharePlatform.calls) {
         expect(call.files!.single.mimeType, 'text/csv');
         expect(call.fileNameOverrides, ['session.csv']);
+        expect(call.downloadFallbackEnabled, isFalse);
         expect(call.sharePositionOrigin, const Rect.fromLTWH(1, 2, 2, 2));
       }
     },
@@ -127,16 +129,43 @@ void main() {
     }
   });
 
+  test('mobile shares delete their staging file after completing', () async {
+    for (final platform in [TargetPlatform.android, TargetPlatform.iOS]) {
+      debugDefaultTargetPlatformOverride = platform;
+      sharePlatform.reset();
+
+      await performShare([1, 2, 3]);
+
+      final path = sharePlatform.calls.single.files!.single.path;
+      expect(path, startsWith(exportCache().path));
+      expect(File(path).existsSync(), isFalse);
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    }
+  });
+
+  test('a share waits for startup cleanup before writing its file', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    await performShare([0]);
+    final cleanup = clearStaleShareExports();
+
+    await performShare([1, 2, 3]);
+    await cleanup;
+
+    final path = sharePlatform.calls.last.files!.single.path;
+    expect(File(path).readAsBytesSync(), [1, 2, 3]);
+  });
+
   test(
     'startup cleanup deletes the export cache, but not the app cache',
     () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
       await performShare([1]);
       expect(exportCache().existsSync(), isTrue);
 
       await clearStaleShareExports();
       await clearStaleShareExports();
 
-      expect(exportCache().existsSync(), isFalse);
+      expect(exportCache().listSync(), isEmpty);
       expect(temp.existsSync(), isTrue);
     },
   );
@@ -158,7 +187,7 @@ void main() {
       );
 
       await tester.pumpWidget(host(20));
-      final delivery = shareDelivery('Share CSV', sharePlugin: sharePlugin);
+      final delivery = shareDelivery('Share CSV');
       await tester.pumpWidget(host(40));
       // Native temp-file I/O needs the real event loop, not fake-async pumping.
       await tester.runAsync(
@@ -172,15 +201,47 @@ void main() {
     },
   );
 
-  testWidgets('shareAnchorFor centers a full-screen source', (tester) async {
+  testWidgets('shareAnchorFor clips a partially visible source', (
+    tester,
+  ) async {
     final key = GlobalKey();
-    await tester.pumpWidget(MaterialApp(home: Scaffold(key: key)));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Align(
+          alignment: Alignment.topLeft,
+          child: Padding(
+            padding: const EdgeInsets.only(top: 580),
+            child: SizedBox(key: key, width: 100, height: 50),
+          ),
+        ),
+      ),
+    );
 
     expect(shareAnchorFor(key.currentContext!), (
-      left: 399.0,
-      top: 299.0,
-      width: 2.0,
-      height: 2.0,
+      left: 0.0,
+      top: 580.0,
+      width: 100.0,
+      height: 20.0,
     ));
+  });
+
+  testWidgets('shareAnchorFor centers an invisible source', (tester) async {
+    final key = GlobalKey();
+    Widget host(double top, double size) => MaterialApp(
+      home: Align(
+        alignment: Alignment.topLeft,
+        child: Padding(
+          padding: EdgeInsets.only(top: top),
+          child: SizedBox(key: key, width: size, height: size),
+        ),
+      ),
+    );
+    const centered = (left: 399.0, top: 299.0, width: 2.0, height: 2.0);
+
+    await tester.pumpWidget(host(700, 100));
+    expect(shareAnchorFor(key.currentContext!), centered);
+
+    await tester.pumpWidget(host(30, 0));
+    expect(shareAnchorFor(key.currentContext!), centered);
   });
 }
