@@ -81,7 +81,7 @@ class SessionStore {
       // Backend construction is terminal; surface it as a Failed catalog
       // instead of spinning on Loading forever.
       _catalog.value = SessionCatalogFailed(error, stackTrace);
-      Error.throwWithStackTrace(_catalogUnavailableError(error), stackTrace);
+      Error.throwWithStackTrace(error, stackTrace);
     }
     return operation(files);
   });
@@ -209,7 +209,7 @@ class SessionStore {
       _bumpBytes();
     } catch (error, stackTrace) {
       _catalog.value = SessionCatalogFailed(error, stackTrace);
-      Error.throwWithStackTrace(_catalogUnavailableError(error), stackTrace);
+      Error.throwWithStackTrace(error, stackTrace);
     }
   }
 

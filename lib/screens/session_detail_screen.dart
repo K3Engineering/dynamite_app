@@ -34,6 +34,9 @@ class SessionDetailScreen extends StatefulWidget {
 }
 
 class _SessionDetailScreenState extends State<SessionDetailScreen> {
+  /// Load state of the session's sample data (see [_LoadState]).
+  _LoadState _loadState = const _Loading();
+
   final GraphController _graphCtrl = GraphController(isLiveSource: false);
 
   /// dF/dt pane visibility for the replay graph.
@@ -41,46 +44,27 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   late final ValueListenable<SessionCatalogState> _catalog;
 
-  /// Cached across catalog edits; a Failed catalog clears it so recovery
-  /// retries even when the previous sample load failed too.
-  Future<SessionData>? _data;
-
   @override
   void initState() {
     super.initState();
     _catalog = SessionStore.instance.catalog;
-    _catalog.addListener(_onCatalogChanged);
-    _onCatalogChanged();
     unawaited(SessionStore.instance.ensureCatalogLoaded().catchError((_) {}));
+    unawaited(_loadData());
   }
 
-  void _onCatalogChanged() {
-    if (_catalog.value case SessionCatalogReady(:final catalog)
-        when catalog.session(widget.session.id) != null) {
-      _data ??= _loadData();
-    } else {
-      _data = null;
-    }
-  }
-
-  Future<SessionData> _loadData() =>
-      // A catalog failure can unmount FutureBuilder before this settles.
-      SessionStore.instance.loadSession(widget.session.id)..ignore();
-
-  @override
-  void didUpdateWidget(covariant SessionDetailScreen oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.session.id != widget.session.id) {
-      throw StateError(
-        'SessionDetailScreen needs a fresh State for a new session id; '
-        'key the widget by session id',
-      );
+  Future<void> _loadData() async {
+    try {
+      final data = await SessionStore.instance.loadSession(widget.session.id);
+      if (!mounted) return;
+      setState(() => _loadState = _Ready(data));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loadState = _Failed(e));
     }
   }
 
   @override
   void dispose() {
-    _catalog.removeListener(_onCatalogChanged);
     _graphCtrl.dispose();
     super.dispose();
   }
@@ -93,16 +77,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       valueListenable: _catalog,
       builder: (context, state, _) {
         return switch (state) {
-          SessionCatalogLoading() => Scaffold(
-            appBar: AppBar(
-              title: Text(
-                widget.session.name.isEmpty
-                    ? untitledSessionName
-                    : widget.session.name,
-              ),
-            ),
-            body: const Center(child: CircularProgressIndicator()),
-          ),
+          SessionCatalogLoading() => _buildSession(settings, widget.session),
           SessionCatalogFailed(:final error) => Scaffold(
             appBar: AppBar(title: const Text('Error loading sessions')),
             body: EmptyPlaceholder(
@@ -115,7 +90,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           SessionCatalogReady(:final catalog) => switch (catalog.session(
             widget.session.id,
           )) {
-            final session? => _buildSession(settings, session, _data!),
+            final session? => _buildSession(settings, session),
             null => Scaffold(
               appBar: AppBar(title: const Text('Session unavailable')),
               body: const EmptyPlaceholder(
@@ -133,67 +108,48 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   Widget _buildSession(
     AppSettings settings,
     SessionSummary session,
-    Future<SessionData> data,
-  ) => FutureBuilder<SessionData>(
-    future: data,
-    builder: (context, snapshot) {
-      final loadedData = snapshot.connectionState == ConnectionState.done
-          ? snapshot.data
-          : null;
-      return Scaffold(
-        appBar: AppBar(
-          title: Text(
-            session.name.isEmpty ? untitledSessionName : session.name,
-          ),
-          actions: [
-            PopupMenuButton<String>(
-              onSelected: (action) =>
-                  unawaited(_onMenuAction(action, session, loadedData)),
-              itemBuilder: (_) => [
-                const PopupMenuItem(value: 'rename', child: Text('Rename')),
-                const PopupMenuItem(value: 'notes', child: Text('Edit notes')),
-                PopupMenuItem(
-                  value: 'download_csv',
-                  enabled: loadedData != null,
-                  child: const Text('Download CSV'),
-                ),
-                PopupMenuItem(
-                  value: 'share_csv',
-                  enabled: loadedData != null && fileShareSupportedHere,
-                  child: Text(
-                    'Share CSV'
-                    '${fileShareSupportedHere ? '' : ' (not supported here)'}',
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'delete',
-                  child: Text(
-                    'Delete',
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ),
-              ],
+  ) => Scaffold(
+    appBar: AppBar(
+      title: Text(session.name.isEmpty ? untitledSessionName : session.name),
+      actions: [
+        PopupMenuButton<String>(
+          onSelected: (action) => unawaited(_onMenuAction(action, session)),
+          itemBuilder: (_) => [
+            const PopupMenuItem(value: 'rename', child: Text('Rename')),
+            const PopupMenuItem(value: 'notes', child: Text('Edit notes')),
+            PopupMenuItem(
+              value: 'download_csv',
+              enabled: _loadState is _Ready,
+              child: const Text('Download CSV'),
+            ),
+            PopupMenuItem(
+              value: 'share_csv',
+              enabled: _loadState is _Ready && fileShareSupportedHere,
+              child: Text(
+                'Share CSV'
+                '${fileShareSupportedHere ? '' : ' (not supported here)'}',
+              ),
+            ),
+            PopupMenuItem(
+              value: 'delete',
+              child: Text(
+                'Delete',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             ),
           ],
         ),
-        body: switch (snapshot) {
-          AsyncSnapshot(connectionState: ConnectionState.done, :final error?) =>
-            EmptyPlaceholder(
-              icon: Icons.error_outline,
-              title: 'Error loading session',
-              hint: '$error',
-              color: Theme.of(context).colorScheme.error,
-            ),
-          AsyncSnapshot(connectionState: ConnectionState.done) => _buildContent(
-            settings,
-            session,
-            snapshot.requireData,
-          ),
-          _ => const Center(child: CircularProgressIndicator()),
-        },
-      );
+      ],
+    ),
+    body: switch (_loadState) {
+      _Loading() => const Center(child: CircularProgressIndicator()),
+      _Failed(:final error) => EmptyPlaceholder(
+        icon: Icons.error_outline,
+        title: 'Error loading session',
+        hint: '$error',
+        color: Theme.of(context).colorScheme.error,
+      ),
+      _Ready(:final data) => _buildContent(settings, session, data),
     },
   );
 
@@ -348,11 +304,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     );
   }
 
-  Future<void> _onMenuAction(
-    String action,
-    SessionSummary session,
-    SessionData? data,
-  ) async {
+  Future<void> _onMenuAction(String action, SessionSummary session) async {
     try {
       switch (action) {
         case 'rename':
@@ -360,9 +312,15 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         case 'notes':
           await _showNotesDialog(session);
         case 'download_csv':
-          if (data != null) await _downloadCsv(session, data);
+          final state = _loadState;
+          if (state is _Ready) {
+            await _downloadCsv(session, state.data);
+          }
         case 'share_csv':
-          if (data != null) await _shareCsv(session, data);
+          final state = _loadState;
+          if (state is _Ready) {
+            await _shareCsv(session, state.data);
+          }
         case 'delete':
           await _deleteAndPop(session);
       }
@@ -516,6 +474,29 @@ class _InterruptedBanner extends StatelessWidget {
       ),
     );
   }
+}
+
+// -- Load state --
+
+/// Load state for the session's sample data: still loading, failed, or ready.
+sealed class _LoadState {
+  const new();
+}
+
+final class _Loading extends _LoadState {
+  const new();
+}
+
+final class _Failed extends _LoadState {
+  const new(this.error);
+
+  final Object error;
+}
+
+final class _Ready extends _LoadState {
+  const new(this.data);
+
+  final SessionData data;
 }
 
 // -- Stat row widget --

@@ -111,13 +111,6 @@ PreparedSessionData decodeAndPrepareSession({
   required Uint8List bytes,
   required List<ChannelCalibration> calibrations,
 }) {
-  if (codec.channelCount <= 0) {
-    throw ArgumentError.value(
-      codec.channelCount,
-      'codec.channelCount',
-      'must be positive',
-    );
-  }
   final calibrationsSnapshot = List.unmodifiableOf(calibrations);
   if (calibrationsSnapshot.length != codec.channelCount) {
     throw ArgumentError.value(

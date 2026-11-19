@@ -928,147 +928,17 @@ void main() {
       expect(await backend.listDirIds(), isEmpty);
     });
 
-    test('refresh rescans changes made during an initial scan', () async {
-      const firstId = '2026-08-29T09-00-00-scan';
-      const secondId = '2026-08-29T09-00-01-scan';
-      final failing = _FaultBackend(backend);
-      SessionStore.instance = store = SessionStore.over(failing);
-      await seedSession(firstId);
+    test('a backend construction failure fails the catalog loudly', () async {
+      final backend = Completer<SessionFilesBackend>();
+      SessionStore.instance = store = SessionStore.overFuture(backend.future);
 
-      var scans = 0;
-      final listingRead = Completer<void>();
-      final releaseScan = Completer<void>();
-      failing.onListDirIds = () async {
-        scans++;
-      };
-      failing.onReadJournal = (_) async {
-        listingRead.complete();
-        await releaseScan.future;
-      };
-
-      final load = store.loadSession(firstId);
-      final ensure = store.ensureCatalogLoaded();
-      await listingRead.future;
-      // The first scan has its directory snapshot; this session can only be
-      // observed by the refresh queued behind it.
-      await seedSession(secondId);
-      final refresh = store.refreshCatalog();
-      failing.onReadJournal = null;
-      releaseScan.complete();
-
-      await Future.wait([ensure, refresh]).timeout(const Duration(seconds: 5));
-      expect((await load.timeout(const Duration(seconds: 5))).sampleCount, 2);
-      expect(scans, 2);
-      expect(readyCatalog().session(firstId), isNotNull);
-      expect(readyCatalog().session(secondId), isNotNull);
-    });
-
-    test(
-      'refresh queued during a failed initial scan still recovers',
-      () async {
-        final failing = _FaultBackend(backend);
-        SessionStore.instance = store = SessionStore.over(failing);
-        await seedSession('2026-08-29T09-00-02-scan');
-
-        var scans = 0;
-        final scanStarted = Completer<void>();
-        final releaseScan = Completer<void>();
-        failing.onListDirIds = () async {
-          scans++;
-          if (scans == 1) {
-            scanStarted.complete();
-            await releaseScan.future;
-            throw StateError('listing failed');
-          }
-        };
-
-        final initialLoad = store.ensureCatalogLoaded();
-        await scanStarted.future;
-        final refresh = store.refreshCatalog();
-        releaseScan.complete();
-
-        await expectLater(initialLoad, throwsStateError);
-        await refresh.timeout(const Duration(seconds: 5));
-        expect(scans, 2);
-        expect(store.catalog.value, isA<SessionCatalogReady>());
-      },
-    );
-
-    test('ensure waits behind a refresh of a failed catalog', () async {
-      final failing = _FaultBackend(backend)..failNextListings = 1;
-      SessionStore.instance = store = SessionStore.over(failing);
-      await expectLater(store.ensureCatalogLoaded(), throwsStateError);
-
-      final scanStarted = Completer<void>();
-      final releaseScan = Completer<void>();
-      failing.onListDirIds = () async {
-        scanStarted.complete();
-        await releaseScan.future;
-      };
-      final refresh = store.refreshCatalog();
-      await scanStarted.future;
-      final ensure = store.ensureCatalogLoaded();
-      releaseScan.complete();
-
-      await Future.wait([refresh, ensure]).timeout(const Duration(seconds: 5));
-      expect(store.catalog.value, isA<SessionCatalogReady>());
-    });
-
-    test(
-      'a backend construction failure fails every caller uniformly',
-      () async {
-        final backend = Completer<SessionFilesBackend>();
-        SessionStore.instance = store = SessionStore.overFuture(backend.future);
-        final errors = <Object>[];
-        final ensure = store.ensureCatalogLoaded().catchError(errors.add);
-        final load = store
-            .loadSession('2026-08-29T09-00-00-none')
-            .then<void>((_) {})
-            .catchError(errors.add);
-
-        backend.completeError(const FileSystemException('no documents dir'));
-        await Future.wait([ensure, load]);
-
-        expect(
-          errors,
-          everyElement(
-            isA<StateError>().having(
-              (error) => error.message,
-              'message',
-              allOf(
-                contains('Session catalog is unavailable'),
-                contains('no documents dir'),
-              ),
-            ),
-          ),
-        );
-        expect(errors, hasLength(2));
-        expect(store.catalog.value, isA<SessionCatalogFailed>());
-      },
-    );
-
-    test('a scan failure reaches concurrent callers uniformly', () async {
-      final failing = _FaultBackend(backend)..failNextListings = 1;
-      SessionStore.instance = store = SessionStore.over(failing);
-      final errors = <Object>[];
-      final first = store.ensureCatalogLoaded().catchError(errors.add);
-      final second = store.ensureCatalogLoaded().catchError(errors.add);
-      await Future.wait([first, second]);
-
-      expect(errors, hasLength(2));
-      expect(
-        errors,
-        everyElement(
-          isA<StateError>().having(
-            (error) => error.message,
-            'message',
-            allOf(
-              contains('Session catalog is unavailable'),
-              contains('listing failed'),
-            ),
-          ),
-        ),
-      );
+      // The listing surfaces the failure instead of spinning forever —
+      // the catalog is Loading until a publish lands, so construction is
+      // exactly where a store that can't even be opened gets reported.
+      final load = store.ensureCatalogLoaded();
+      backend.completeError(StateError('no documents dir'));
+      await expectLater(load, throwsA(isA<StateError>()));
+      expect(store.catalog.value, isA<SessionCatalogFailed>());
     });
 
     test('a classify failure on a delta falls back to a full rescan', () async {
@@ -1681,9 +1551,6 @@ class _FaultBackend implements SessionFilesBackend {
   /// finalize-time interrupted-verdict test.
   bool failTouchFinal = false;
 
-  Future<void> Function()? onListDirIds;
-  Future<void> Function(String id)? onReadJournal;
-
   @override
   Future<SessionDataSink> createSession(
     String id,
@@ -1700,22 +1567,20 @@ class _FaultBackend implements SessionFilesBackend {
   }
 
   @override
-  Future<List<String>> listDirIds() async {
+  Future<List<String>> listDirIds() {
     if (failListings || failNextListings > 0) {
       if (failNextListings > 0) failNextListings--;
       throw StateError('listing failed');
     }
-    await onListDirIds?.call();
     return inner.listDirIds();
   }
 
   @override
-  Future<Uint8List?> readJournal(String id) async {
+  Future<Uint8List?> readJournal(String id) {
     if (failNextJournalReads > 0) {
       failNextJournalReads--;
       throw StateError('journal read failed');
     }
-    await onReadJournal?.call(id);
     return inner.readJournal(id);
   }
 

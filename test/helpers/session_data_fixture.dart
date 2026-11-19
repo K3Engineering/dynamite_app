@@ -19,22 +19,10 @@ SessionData sessionDataFixture({
   int ssnOrigin = 0,
   KvsSnapshot? deviceKvs,
 }) {
-  if (channels.isEmpty) {
-    throw ArgumentError.value(channels, 'channels', 'must not be empty');
-  }
   final count = channels.first.length;
-  for (int ch = 1; ch < channels.length; ch++) {
-    if (channels[ch].length != count) {
-      throw ArgumentError.value(
-        channels[ch].length,
-        'channels[$ch]',
-        'must have the same length as channels[0] ($count)',
-      );
-    }
-  }
   final codec = SessionChunkCodec(channels.length);
   final bytes = codec.pack(count, (s, ch) => channels[ch][s]);
-  codec.fillGapSentinels(bytes, gaps?.ranges ?? const []);
+  codec.fillGapSentinels(bytes, gaps?.rangesIn(0, count) ?? const []);
   return SessionData.fromPrepared(
     prepared: decodeAndPrepareSession(
       codec: codec,
