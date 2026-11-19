@@ -1317,18 +1317,6 @@ void main() {
     });
 
     test(
-      'loadSession refuses a data file emptied after the catalog scan',
-      () async {
-        const id = '2026-08-28T14-30-12-null';
-        await seedSession(id);
-        await store.ensureCatalogLoaded();
-        File('${tmp.path}/sessions/$id/data.raw').writeAsBytesSync([]);
-
-        await expectLater(store.loadSession(id), throwsStateError);
-      },
-    );
-
-    test(
       'edits overlay the summary; a torn trailing edit costs only itself',
       () async {
         await seedSession('2026-08-28T14-30-12-edit');

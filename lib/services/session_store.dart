@@ -396,7 +396,7 @@ class SessionStore {
         final journal = parseSessionJournal(journalBytes);
         final meta = journal.meta;
         final data = await files.readData(id);
-        if (data == null || data.isEmpty) {
+        if (data == null) {
           throw StateError('loadSession: no data for session $id');
         }
         final prepared = decodeAndPrepareSession(

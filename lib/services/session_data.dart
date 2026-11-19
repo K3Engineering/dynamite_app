@@ -66,12 +66,11 @@ class SessionData implements GraphDataSource {
   new fromPrepared({
     required PreparedSessionData prepared,
     required this.sampleRate,
-    required List<double?> tares,
+    required this.tares,
     required this.ssnOrigin,
     this.deviceKvs,
   }) : channels = prepared.channels,
        calibrations = prepared.calibrations,
-       tares = List.unmodifiableOf(tares),
        sampleCount = prepared.sampleCount,
        gaps = prepared.gaps,
        _extremes = prepared.extremes,
