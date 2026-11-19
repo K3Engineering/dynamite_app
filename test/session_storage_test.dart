@@ -925,6 +925,26 @@ void main() {
       },
     );
 
+    test('ensure waits behind a refresh of a failed catalog', () async {
+      final failing = _FaultBackend(backend)..failNextListings = 1;
+      SessionStore.instance = store = SessionStore.over(failing);
+      await expectLater(store.ensureCatalogLoaded(), throwsStateError);
+
+      final scanStarted = Completer<void>();
+      final releaseScan = Completer<void>();
+      failing.onListDirIds = () async {
+        scanStarted.complete();
+        await releaseScan.future;
+      };
+      final refresh = store.refreshCatalog();
+      await scanStarted.future;
+      final ensure = store.ensureCatalogLoaded();
+      releaseScan.complete();
+
+      await Future.wait([refresh, ensure]).timeout(const Duration(seconds: 5));
+      expect(store.catalog.value, isA<SessionCatalogReady>());
+    });
+
     test(
       'a backend construction failure fails every caller uniformly',
       () async {

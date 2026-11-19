@@ -96,10 +96,6 @@ class SessionStore {
   }
 
   Future<void> ensureCatalogLoaded() {
-    // A failed future, not a sync throw, so callers can catch it uniformly.
-    if (_catalog.value case SessionCatalogFailed(:final error)) {
-      return Future.error(_catalogUnavailableError(error));
-    }
     if (_catalog.value is SessionCatalogReady) return Future.value();
     return _withCatalog<void>((_, _) async {});
   }

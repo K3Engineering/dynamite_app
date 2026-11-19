@@ -50,14 +50,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     super.initState();
     _catalog = SessionStore.instance.catalog;
     _catalog.addListener(_onCatalogChanged);
-    _data = _loadData();
+    _onCatalogChanged();
+    unawaited(SessionStore.instance.ensureCatalogLoaded().catchError((_) {}));
   }
 
   void _onCatalogChanged() {
-    if (_catalog.value is SessionCatalogFailed) {
-      _data = null;
-    } else if (_catalog.value is SessionCatalogReady) {
+    if (_catalog.value case SessionCatalogReady(:final catalog)
+        when catalog.session(widget.session.id) != null) {
       _data ??= _loadData();
+    } else {
+      _data = null;
     }
   }
 
@@ -129,55 +131,65 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     Future<SessionData>? data,
   ]) => FutureBuilder<SessionData>(
     future: data,
-    builder: (context, snapshot) => Scaffold(
-      appBar: AppBar(
-        title: Text(session.name.isEmpty ? untitledSessionName : session.name),
-        actions: [
-          PopupMenuButton<String>(
-            onSelected: (action) =>
-                unawaited(_onMenuAction(action, session, snapshot.data)),
-            itemBuilder: (_) => [
-              const PopupMenuItem(value: 'rename', child: Text('Rename')),
-              const PopupMenuItem(value: 'notes', child: Text('Edit notes')),
-              PopupMenuItem(
-                value: 'download_csv',
-                enabled: snapshot.hasData,
-                child: const Text('Download CSV'),
-              ),
-              PopupMenuItem(
-                value: 'share_csv',
-                enabled: snapshot.hasData && fileShareSupportedHere,
-                child: Text(
-                  'Share CSV'
-                  '${fileShareSupportedHere ? '' : ' (not supported here)'}',
-                ),
-              ),
-              PopupMenuItem(
-                value: 'delete',
-                child: Text(
-                  'Delete',
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-              ),
-            ],
+    builder: (context, snapshot) {
+      final loadedData = snapshot.connectionState == ConnectionState.done
+          ? snapshot.data
+          : null;
+      return Scaffold(
+        appBar: AppBar(
+          title: Text(
+            session.name.isEmpty ? untitledSessionName : session.name,
           ),
-        ],
-      ),
-      body: switch (snapshot) {
-        AsyncSnapshot(:final error?) => EmptyPlaceholder(
-          icon: Icons.error_outline,
-          title: 'Error loading session',
-          hint: '$error',
-          color: Theme.of(context).colorScheme.error,
+          actions: [
+            PopupMenuButton<String>(
+              onSelected: (action) =>
+                  unawaited(_onMenuAction(action, session, loadedData)),
+              itemBuilder: (_) => [
+                const PopupMenuItem(value: 'rename', child: Text('Rename')),
+                const PopupMenuItem(value: 'notes', child: Text('Edit notes')),
+                PopupMenuItem(
+                  value: 'download_csv',
+                  enabled: loadedData != null,
+                  child: const Text('Download CSV'),
+                ),
+                PopupMenuItem(
+                  value: 'share_csv',
+                  enabled: loadedData != null && fileShareSupportedHere,
+                  child: Text(
+                    'Share CSV'
+                    '${fileShareSupportedHere ? '' : ' (not supported here)'}',
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'delete',
+                  child: Text(
+                    'Delete',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
-        AsyncSnapshot(connectionState: ConnectionState.done) => _buildContent(
-          settings,
-          session,
-          snapshot.requireData,
-        ),
-        _ => const Center(child: CircularProgressIndicator()),
-      },
-    ),
+        body: switch (snapshot) {
+          AsyncSnapshot(connectionState: ConnectionState.done, :final error?) =>
+            EmptyPlaceholder(
+              icon: Icons.error_outline,
+              title: 'Error loading session',
+              hint: '$error',
+              color: Theme.of(context).colorScheme.error,
+            ),
+          AsyncSnapshot(connectionState: ConnectionState.done) => _buildContent(
+            settings,
+            session,
+            snapshot.requireData,
+          ),
+          _ => const Center(child: CircularProgressIndicator()),
+        },
+      );
+    },
   );
 
   Widget _buildContent(

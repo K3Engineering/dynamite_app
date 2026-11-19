@@ -337,16 +337,15 @@ void main() {
   });
 
   testWidgets(
-    'catalog recovery retries data that failed while catalog was ready',
+    'a failed mount and initially missing session loads after it appears',
     (tester) async {
-      const id = '2026-08-28T14-30-12-fa11';
-      await seedSession(tester, id, codec.pack(2, (s, ch) => s));
-      final recoveringBackend = _FailFirstListingBackend(backend)
-        ..failListings = false
-        ..failDataReads = true;
+      const id = '2026-08-28T14-30-12-b105';
+      final recoveringBackend = _FailFirstListingBackend(backend);
       final recoveringStore = SessionStore.over(recoveringBackend);
       SessionStore.instance = recoveringStore;
-      await tester.runAsync(recoveringStore.refreshCatalog);
+      await tester.runAsync(
+        () => expectLater(recoveringStore.refreshCatalog(), throwsStateError),
+      );
 
       SharedPreferences.setMockInitialValues({});
       final prefs = await SharedPreferences.getInstance();
@@ -360,25 +359,18 @@ void main() {
           child: MaterialApp(home: SessionDetailScreen(session: summary(id))),
         ),
       );
-      for (var i = 0; i < 100; i++) {
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 20)),
-        );
-        await tester.pump();
-        if (find.byType(CircularProgressIndicator).evaluate().isEmpty) break;
-      }
-      expect(find.text('Error loading session'), findsOneWidget);
-
-      recoveringBackend.failListings = true;
+      expect(find.text('Error loading sessions'), findsNWidgets(2));
       await tester.runAsync(
-        () => expectLater(recoveringStore.refreshCatalog(), throwsStateError),
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
       );
       await tester.pump();
-      expect(find.text('Error loading sessions'), findsNWidgets(2));
 
-      recoveringBackend
-        ..failListings = false
-        ..failDataReads = false;
+      recoveringBackend.failListings = false;
+      await tester.runAsync(recoveringStore.refreshCatalog);
+      await tester.pump();
+      expect(find.text('Session unavailable'), findsNWidgets(2));
+
+      await seedSession(tester, id, codec.pack(2, (s, ch) => s));
       await tester.runAsync(() async {
         recoveringStore.refreshCatalog().ignore();
       });
@@ -397,6 +389,84 @@ void main() {
       await unmount(tester);
     },
   );
+
+  testWidgets('catalog recovery retries data without showing a stale error', (
+    tester,
+  ) async {
+    const id = '2026-08-28T14-30-12-fa11';
+    await seedSession(tester, id, codec.pack(2, (s, ch) => s));
+    final recoveringBackend = _FailFirstListingBackend(backend)
+      ..failListings = false
+      ..failDataReads = true;
+    final recoveringStore = SessionStore.over(recoveringBackend);
+    SessionStore.instance = recoveringStore;
+    await tester.runAsync(recoveringStore.refreshCatalog);
+
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AppSettings>.value(
+            value: AppSettings(prefs: prefs),
+          ),
+        ],
+        child: MaterialApp(home: SessionDetailScreen(session: summary(id))),
+      ),
+    );
+    for (var i = 0; i < 100; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+      if (find.byType(CircularProgressIndicator).evaluate().isEmpty) break;
+    }
+    expect(find.text('Error loading session'), findsOneWidget);
+
+    // Fail and recover without a frame in between: FutureBuilder receives
+    // the retry through didUpdateWidget, which retains the prior error while
+    // the retry is waiting.
+    final retryStarted = Completer<void>();
+    final releaseRetry = Completer<void>();
+    recoveringBackend.onReadData = () async {
+      retryStarted.complete();
+      await releaseRetry.future;
+    };
+    recoveringBackend.failListings = true;
+    await tester.runAsync(() async {
+      await expectLater(recoveringStore.refreshCatalog(), throwsStateError);
+      recoveringBackend
+        ..failListings = false
+        ..failDataReads = false;
+      recoveringStore.refreshCatalog().ignore();
+    });
+    for (var i = 0; i < 100 && !retryStarted.isCompleted; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+    }
+    expect(retryStarted.isCompleted, isTrue);
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('Error loading session'), findsNothing);
+    expect(find.text('Error loading sessions'), findsNothing);
+
+    releaseRetry.complete();
+    recoveringBackend.onReadData = null;
+    for (var i = 0; i < 100; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+      if (find.byType(CircularProgressIndicator).evaluate().isEmpty) break;
+    }
+
+    expect(find.text('Error loading session'), findsNothing);
+    expect(find.text('Detail session'), findsOneWidget);
+    expect(find.text('Samples'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await unmount(tester);
+  });
 
   testWidgets('a failed menu edit reports an error instead of throwing', (
     tester,
@@ -466,6 +536,7 @@ class _FailFirstListingBackend implements SessionFilesBackend {
   bool failListings = true;
   bool failDataReads = false;
   bool failJournalWrites = false;
+  Future<void> Function()? onReadData;
 
   @override
   Future<List<String>> listDirIds() {
@@ -484,8 +555,9 @@ class _FailFirstListingBackend implements SessionFilesBackend {
   Future<Uint8List?> readJournal(String id) => inner.readJournal(id);
 
   @override
-  Future<Uint8List?> readData(String id) {
+  Future<Uint8List?> readData(String id) async {
     if (failDataReads) throw StateError('data unavailable');
+    await onReadData?.call();
     return inner.readData(id);
   }
 
