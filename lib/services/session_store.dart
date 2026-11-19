@@ -81,7 +81,7 @@ class SessionStore {
       // Backend construction is terminal; surface it as a Failed catalog
       // instead of spinning on Loading forever.
       _catalog.value = SessionCatalogFailed(error, stackTrace);
-      Error.throwWithStackTrace(error, stackTrace);
+      Error.throwWithStackTrace(_catalogUnavailableError(error), stackTrace);
     }
     return operation(files);
   });
@@ -104,11 +104,9 @@ class SessionStore {
     return _withCatalog<void>((_, _) async {});
   }
 
-  /// Re-read every session directory and republish. Also a Failed catalog's
-  /// only way back. An initial scan already in the queue satisfies the refresh.
-  Future<void> refreshCatalog() => _catalog.value is SessionCatalogLoading
-      ? ensureCatalogLoaded()
-      : _enqueue(_publishCatalog);
+  /// Queue a re-scan after every earlier operation. Also a Failed catalog's
+  /// only way back.
+  Future<void> refreshCatalog() => _enqueue(_publishCatalog);
 
   /// Runs on [_opQueue]. The scan is inline: awaiting a separately queued scan
   /// here would wait on an operation behind this one.
@@ -215,7 +213,7 @@ class SessionStore {
       _bumpBytes();
     } catch (error, stackTrace) {
       _catalog.value = SessionCatalogFailed(error, stackTrace);
-      Error.throwWithStackTrace(error, stackTrace);
+      Error.throwWithStackTrace(_catalogUnavailableError(error), stackTrace);
     }
   }
 
@@ -394,7 +392,7 @@ class SessionStore {
         final journal = parseSessionJournal(journalBytes);
         final meta = journal.meta;
         final data = await files.readData(id);
-        if (data == null) {
+        if (data == null || data.isEmpty) {
           throw StateError('loadSession: no data for session $id');
         }
         final prepared = decodeAndPrepareSession(

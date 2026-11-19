@@ -41,18 +41,28 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   late final ValueListenable<SessionCatalogState> _catalog;
 
-  /// Created on the first Ready catalog, then cached across catalog edits.
+  /// Cached across catalog edits; a Failed catalog clears it so recovery
+  /// retries even when the previous sample load failed too.
   Future<SessionData>? _data;
 
   @override
   void initState() {
     super.initState();
     _catalog = SessionStore.instance.catalog;
-    unawaited(SessionStore.instance.ensureCatalogLoaded().catchError((_) {}));
+    _catalog.addListener(_onCatalogChanged);
+    _data = _loadData();
+  }
+
+  void _onCatalogChanged() {
+    if (_catalog.value is SessionCatalogFailed) {
+      _data = null;
+    } else if (_catalog.value is SessionCatalogReady) {
+      _data ??= _loadData();
+    }
   }
 
   Future<SessionData> _loadData() =>
-      // A catalog error can keep FutureBuilder unmounted when this rejects.
+      // A catalog failure can unmount FutureBuilder before this settles.
       SessionStore.instance.loadSession(widget.session.id)..ignore();
 
   @override
@@ -68,6 +78,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   @override
   void dispose() {
+    _catalog.removeListener(_onCatalogChanged);
     _graphCtrl.dispose();
     super.dispose();
   }
@@ -80,7 +91,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       valueListenable: _catalog,
       builder: (context, state, _) {
         return switch (state) {
-          SessionCatalogLoading() => _buildSession(settings, widget.session),
+          SessionCatalogLoading() => _buildSession(
+            settings,
+            widget.session,
+            _data,
+          ),
           SessionCatalogFailed(:final error) => Scaffold(
             appBar: AppBar(title: const Text('Error loading sessions')),
             body: EmptyPlaceholder(
@@ -93,11 +108,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           SessionCatalogReady(:final catalog) => switch (catalog.session(
             widget.session.id,
           )) {
-            final session? => _buildSession(
-              settings,
-              session,
-              _data ??= _loadData(),
-            ),
+            final session? => _buildSession(settings, session, _data),
             null => Scaffold(
               appBar: AppBar(title: const Text('Session unavailable')),
               body: const EmptyPlaceholder(
@@ -124,7 +135,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         actions: [
           PopupMenuButton<String>(
             onSelected: (action) =>
-                _onMenuAction(action, session, snapshot.data),
+                unawaited(_onMenuAction(action, session, snapshot.data)),
             itemBuilder: (_) => [
               const PopupMenuItem(value: 'rename', child: Text('Rename')),
               const PopupMenuItem(value: 'notes', child: Text('Edit notes')),
@@ -189,7 +200,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             labels: channelLabels,
             activeChannels: visibleChannels,
             onToggleChannel: (index) => unawaited(
-              SessionStore.instance.toggleVisibleChannel(session.id, index),
+              SessionStore.instance
+                  .toggleVisibleChannel(session.id, index)
+                  .catchError(_showActionError),
             ),
             unit: unit,
             rows: [
@@ -323,17 +336,30 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     SessionSummary session,
     SessionData? data,
   ) async {
-    switch (action) {
-      case 'rename':
-        await _showRenameDialog(session);
-      case 'notes':
-        await _showNotesDialog(session);
-      case 'download_csv':
-        if (data != null) await _downloadCsv(session, data);
-      case 'share_csv':
-        if (data != null) await _shareCsv(session, data);
-      case 'delete':
-        await _deleteAndPop(session);
+    try {
+      switch (action) {
+        case 'rename':
+          await _showRenameDialog(session);
+        case 'notes':
+          await _showNotesDialog(session);
+        case 'download_csv':
+          if (data != null) await _downloadCsv(session, data);
+        case 'share_csv':
+          if (data != null) await _shareCsv(session, data);
+        case 'delete':
+          await _deleteAndPop(session);
+      }
+    } catch (error) {
+      _showActionError(error);
+    }
+  }
+
+  void _showActionError(Object error) {
+    if (mounted) {
+      showErrorSnackBar(
+        ScaffoldMessenger.of(context),
+        'Session action failed: $error',
+      );
     }
   }
 

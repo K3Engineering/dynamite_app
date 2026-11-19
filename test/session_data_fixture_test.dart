@@ -5,7 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
 import 'package:dynamite_app/models/gap_list.dart';
 import 'package:dynamite_app/models/load_cell.dart';
+import 'package:dynamite_app/services/live_session_writer.dart';
 import 'package:dynamite_app/services/session_data.dart';
+import 'package:dynamite_app/services/session_preparation.dart';
 
 import 'helpers/session_data_fixture.dart';
 
@@ -41,7 +43,16 @@ void main() {
   });
 
   test('rejects out-of-bounds gaps without clamping them', () {
-    expect(() => buildFixture(gaps: GapList()..append(3, 4)), throwsRangeError);
+    expect(
+      () => buildFixture(gaps: GapList()..append(3, 4)),
+      throwsA(
+        isA<RangeError>().having(
+          (error) => error.message,
+          'message',
+          contains('gap range'),
+        ),
+      ),
+    );
   });
 
   test('rejects an invalid sample rate or tare count', () {
@@ -90,6 +101,34 @@ void main() {
       boardHasNominals: false,
       anyChannelHasLoadCell: true,
     ));
+  });
+
+  test('preparation snapshots calibrations and freezes its list views', () {
+    const original = ChannelCalibration(board: null);
+    final calibrations = [original];
+    final prepared = decodeAndPrepareSession(
+      codec: const SessionChunkCodec(1),
+      bytes: Uint8List(4),
+      calibrations: calibrations,
+    );
+
+    calibrations[0] = const ChannelCalibration(
+      board: null,
+      loadCell: LoadCellProfile(capacityKg: 100, sensitivityMvV: 2),
+    );
+    final data = SessionData.fromPrepared(
+      prepared: prepared,
+      sampleRate: 1000,
+      tares: const [null],
+      ssnOrigin: 0,
+    );
+
+    expect(data.calibrationFor(0), same(original));
+    expect(prepared.channels.clear, throwsUnsupportedError);
+    expect(prepared.calibrations.clear, throwsUnsupportedError);
+    expect(prepared.valueBuckets.clear, throwsUnsupportedError);
+    expect(prepared.diffBuckets.clear, throwsUnsupportedError);
+    expect(prepared.extremes.clear, throwsUnsupportedError);
   });
 
   test('loaded data snapshots mutable list arguments', () {

@@ -17,7 +17,7 @@ typedef UnitAvailability = ({
 /// Resolve availability for [calibrations]. Board data is all-or-nothing per
 /// board, so channel 0 stands in for it. Channel visibility is not an input.
 UnitAvailability resolveUnitAvailability(
-  Iterable<ChannelCalibration> calibrations,
+  List<ChannelCalibration> calibrations,
 ) => (
   boardHasNominals: calibrations.first.board != null,
   anyChannelHasLoadCell: calibrations.any((cal) => cal.loadCell != null),

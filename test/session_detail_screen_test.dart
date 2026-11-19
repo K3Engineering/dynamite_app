@@ -254,13 +254,13 @@ void main() {
   });
 
   testWidgets(
-    'a failed catalog without a data builder handles the load error',
+    'a failed catalog before the data builder mounts handles the load error',
     (tester) async {
       final backend = Completer<SessionFilesBackend>();
       final failedStore = SessionStore.overFuture(backend.future);
       SessionStore.instance = failedStore;
       final catalogLoad = failedStore.ensureCatalogLoaded();
-      backend.completeError(StateError('backend unavailable'));
+      backend.completeError(const FileSystemException('backend unavailable'));
       await tester.runAsync(() => expectLater(catalogLoad, throwsStateError));
       expect(failedStore.catalog.value, isA<SessionCatalogFailed>());
 
@@ -336,6 +336,99 @@ void main() {
     await unmount(tester);
   });
 
+  testWidgets(
+    'catalog recovery retries data that failed while catalog was ready',
+    (tester) async {
+      const id = '2026-08-28T14-30-12-fa11';
+      await seedSession(tester, id, codec.pack(2, (s, ch) => s));
+      final recoveringBackend = _FailFirstListingBackend(backend)
+        ..failListings = false
+        ..failDataReads = true;
+      final recoveringStore = SessionStore.over(recoveringBackend);
+      SessionStore.instance = recoveringStore;
+      await tester.runAsync(recoveringStore.refreshCatalog);
+
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider<AppSettings>.value(
+              value: AppSettings(prefs: prefs),
+            ),
+          ],
+          child: MaterialApp(home: SessionDetailScreen(session: summary(id))),
+        ),
+      );
+      for (var i = 0; i < 100; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump();
+        if (find.byType(CircularProgressIndicator).evaluate().isEmpty) break;
+      }
+      expect(find.text('Error loading session'), findsOneWidget);
+
+      recoveringBackend.failListings = true;
+      await tester.runAsync(
+        () => expectLater(recoveringStore.refreshCatalog(), throwsStateError),
+      );
+      await tester.pump();
+      expect(find.text('Error loading sessions'), findsNWidgets(2));
+
+      recoveringBackend
+        ..failListings = false
+        ..failDataReads = false;
+      await tester.runAsync(() async {
+        recoveringStore.refreshCatalog().ignore();
+      });
+      for (var i = 0; i < 100; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump();
+        if (find.byType(CircularProgressIndicator).evaluate().isEmpty) break;
+      }
+
+      expect(find.text('Error loading session'), findsNothing);
+      expect(find.text('Detail session'), findsOneWidget);
+      expect(find.text('Samples'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await unmount(tester);
+    },
+  );
+
+  testWidgets('a failed menu edit reports an error instead of throwing', (
+    tester,
+  ) async {
+    const id = '2026-08-28T14-30-12-ed17';
+    await seedSession(tester, id, codec.pack(2, (s, ch) => s));
+    final editBackend = _FailFirstListingBackend(backend)..failListings = false;
+    SessionStore.instance = SessionStore.over(editBackend);
+    await pumpDetail(tester, id);
+    editBackend.failJournalWrites = true;
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rename'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'Unsaved name');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+    final errorSnackBar = find.textContaining('Session action failed:');
+    for (var i = 0; i < 100 && errorSnackBar.evaluate().isEmpty; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+    }
+
+    expect(tester.takeException(), isNull);
+    expect(find.textContaining('Session action failed:'), findsOneWidget);
+    expect(find.text('Detail session'), findsOneWidget);
+    await unmount(tester);
+  });
+
   testWidgets('an undecodable session renders the error placeholder', (
     tester,
   ) async {
@@ -371,6 +464,8 @@ class _FailFirstListingBackend implements SessionFilesBackend {
 
   final IoSessionFilesBackend inner;
   bool failListings = true;
+  bool failDataReads = false;
+  bool failJournalWrites = false;
 
   @override
   Future<List<String>> listDirIds() {
@@ -389,7 +484,10 @@ class _FailFirstListingBackend implements SessionFilesBackend {
   Future<Uint8List?> readJournal(String id) => inner.readJournal(id);
 
   @override
-  Future<Uint8List?> readData(String id) => inner.readData(id);
+  Future<Uint8List?> readData(String id) {
+    if (failDataReads) throw StateError('data unavailable');
+    return inner.readData(id);
+  }
 
   @override
   Future<int> dataByteLength(String id) => inner.dataByteLength(id);
@@ -405,8 +503,10 @@ class _FailFirstListingBackend implements SessionFilesBackend {
       inner.truncateJournal(id, bytes);
 
   @override
-  Future<void> appendJournal(String id, Uint8List bytes) =>
-      inner.appendJournal(id, bytes);
+  Future<void> appendJournal(String id, Uint8List bytes) {
+    if (failJournalWrites) throw StateError('journal write failed');
+    return inner.appendJournal(id, bytes);
+  }
 
   @override
   Future<void> delete(String id) => inner.delete(id);

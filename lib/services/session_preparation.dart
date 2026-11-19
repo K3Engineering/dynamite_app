@@ -88,18 +88,18 @@ class _AggregateBuilder {
 
   PreparedSessionData complete(List<Int32List> channels, GapList gaps) =>
       PreparedSessionData._(
-        channels: channels,
-        calibrations: calibrations,
+        channels: List.unmodifiableOf(channels),
+        calibrations: List.unmodifiableOf(calibrations),
         gaps: gaps,
-        valueBuckets: _valueBuckets,
-        diffBuckets: _diffBuckets,
-        extremes: [
+        valueBuckets: List.unmodifiableOf(_valueBuckets),
+        diffBuckets: List.unmodifiableOf(_diffBuckets),
+        extremes: List.unmodifiableOf([
           for (final ingest in _ingests)
             switch (ingest.extremes) {
               final ext? => (ext.$1.toDouble(), ext.$2.toDouble()),
               null => null,
             },
-        ],
+        ]),
       );
 }
 
@@ -118,9 +118,10 @@ PreparedSessionData decodeAndPrepareSession({
       'must be positive',
     );
   }
-  if (calibrations.length != codec.channelCount) {
+  final calibrationsSnapshot = List.unmodifiableOf(calibrations);
+  if (calibrationsSnapshot.length != codec.channelCount) {
     throw ArgumentError.value(
-      calibrations.length,
+      calibrationsSnapshot.length,
       'calibrations',
       'must contain one entry per data channel (${codec.channelCount})',
     );
@@ -137,7 +138,11 @@ PreparedSessionData decodeAndPrepareSession({
   final frames = codec.framesOf(bytes);
   final channels = List.generate(codec.channelCount, (_) => Int32List(frames));
   final gaps = GapList();
-  final aggregates = _AggregateBuilder.create(frames, calibrations, gaps);
+  final aggregates = _AggregateBuilder.create(
+    frames,
+    calibrationsSnapshot,
+    gaps,
+  );
 
   for (int s = 0; s < frames; s++) {
     final base = s * codec.channelCount * 4;

@@ -32,6 +32,9 @@ SessionData sessionDataFixture({
       );
     }
   }
+  final codec = SessionChunkCodec(channels.length);
+  final bytes = codec.pack(count, (s, ch) => channels[ch][s]);
+  codec.fillGapSentinels(bytes, gaps?.ranges ?? const []);
   for (final (start, end) in gaps?.ranges ?? const <(int, int)>[]) {
     for (int s = start; s < end; s++) {
       // A gap at sample 0 has no held value; the decoder rejects it below.
@@ -47,9 +50,6 @@ SessionData sessionDataFixture({
       }
     }
   }
-  final codec = SessionChunkCodec(channels.length);
-  final bytes = codec.pack(count, (s, ch) => channels[ch][s]);
-  codec.fillGapSentinels(bytes, gaps?.ranges ?? const []);
   return SessionData.fromPrepared(
     prepared: decodeAndPrepareSession(
       codec: codec,
