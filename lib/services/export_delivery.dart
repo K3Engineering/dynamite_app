@@ -125,32 +125,28 @@ Future<String?> shareExport(
       mimeType: artifact.mimeType,
     );
   }
-  try {
-    final result = await SharePlus.instance.share(
-      ShareParams(
-        title: dialogTitle,
-        files: [file],
-        fileNameOverrides: [artifact.fileName],
-        // An unsupported web share is an error, not a "Shared" snackbar for a
-        // download fallback whose data: URI cannot hold large session CSVs.
-        downloadFallbackEnabled: false,
-        sharePositionOrigin: Rect.fromLTWH(
-          anchor.left,
-          anchor.top,
-          anchor.width,
-          anchor.height,
-        ),
+  final result = await SharePlus.instance.share(
+    ShareParams(
+      title: dialogTitle,
+      files: [file],
+      fileNameOverrides: [artifact.fileName],
+      // An unsupported web share is an error, not a "Shared" snackbar for a
+      // download fallback whose data: URI cannot hold large session CSVs.
+      downloadFallbackEnabled: false,
+      sharePositionOrigin: Rect.fromLTWH(
+        anchor.left,
+        anchor.top,
+        anchor.width,
+        anchor.height,
       ),
-    );
-    return switch (result.status) {
-      ShareResultStatus.success => 'Shared ${artifact.fileName}',
-      // Backed out of the share sheet: null = the caller shows no snackbar.
-      ShareResultStatus.dismissed => null,
-      // The platform can't tell what happened; treat as shared.
-      ShareResultStatus.unavailable =>
-        'Shared ${artifact.fileName} (status unknown)',
-    };
-  } finally {
-    await releaseTempExportFile(file.path);
-  }
+    ),
+  );
+  return switch (result.status) {
+    ShareResultStatus.success => 'Shared ${artifact.fileName}',
+    // Backed out of the share sheet: null = the caller shows no snackbar.
+    ShareResultStatus.dismissed => null,
+    // The platform can't tell what happened; treat as shared.
+    ShareResultStatus.unavailable =>
+      'Shared ${artifact.fileName} (status unknown)',
+  };
 }

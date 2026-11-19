@@ -8,7 +8,6 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:share_plus_platform_interface/share_plus_platform_interface.dart';
 
 import 'package:dynamite_app/services/export_delivery.dart';
-import 'package:dynamite_app/services/export_temp_io.dart';
 
 import 'support/export_platform_fakes.dart';
 
@@ -95,9 +94,8 @@ void main() {
   });
 
   test(
-    'desktop shares keep independent app-cache files after completing',
+    'native shares keep independent app-cache files after completing',
     () async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
       await performShare([1, 2, 3]);
       await performShare([4, 5, 6]);
 
@@ -128,47 +126,6 @@ void main() {
       await expectLater(performShare([1]), completion(expected));
     }
   });
-
-  test('mobile shares delete their staging file after completing', () async {
-    for (final platform in [TargetPlatform.android, TargetPlatform.iOS]) {
-      debugDefaultTargetPlatformOverride = platform;
-      sharePlatform.reset();
-
-      await performShare([1, 2, 3]);
-
-      final path = sharePlatform.calls.single.files!.single.path;
-      expect(path, startsWith(exportCache().path));
-      expect(File(path).existsSync(), isFalse);
-      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-    }
-  });
-
-  test('a share waits for startup cleanup before writing its file', () async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-    await performShare([0]);
-    final cleanup = clearStaleShareExports();
-
-    await performShare([1, 2, 3]);
-    await cleanup;
-
-    final path = sharePlatform.calls.last.files!.single.path;
-    expect(File(path).readAsBytesSync(), [1, 2, 3]);
-  });
-
-  test(
-    'startup cleanup deletes the export cache, but not the app cache',
-    () async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-      await performShare([1]);
-      expect(exportCache().existsSync(), isTrue);
-
-      await clearStaleShareExports();
-      await clearStaleShareExports();
-
-      expect(exportCache().listSync(), isEmpty);
-      expect(temp.existsSync(), isTrue);
-    },
-  );
 
   testWidgets(
     'shareDelivery uses the invoking widget full bounds at delivery',
