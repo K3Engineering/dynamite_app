@@ -326,6 +326,105 @@ void main() {
     });
   });
 
+  test('OTA rejects a link that is still setting up', () {
+    fakeAsync((async) {
+      final (link, _) = wire();
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 1));
+      expect(link.linkState, BtLinkState.connected);
+
+      var bodyCalls = 0;
+      expect(() => link.runOta((_) async => bodyCalls++), throwsStateError);
+      expect(bodyCalls, 0);
+      expect(MockBlePlatform.instance.otaControlSubscriptionLog, isEmpty);
+
+      async.elapse(const Duration(seconds: 3));
+      teardownLink(async, link);
+    });
+  });
+
+  test('a cancelled attempt cannot fail its same-device replacement', () {
+    fakeAsync((async) {
+      final (link, _) = wire();
+      MockBlePlatform.instance.slowConnect = true;
+      unawaited(link.connectToDevice(deviceId));
+      unawaited(link.disconnectSelectedDevice());
+      async.flushMicrotasks();
+
+      // Start the replacement shortly before attempt one's 5 s timeout. Its
+      // stale continuation must not tear down the new Connecting instance.
+      async.elapse(const Duration(milliseconds: 4500));
+      MockBlePlatform.instance.slowConnect = false;
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+
+      // Drain the first platform connect's late success as well.
+      async.elapse(const Duration(seconds: 16));
+      expect(link.isStreaming, isTrue);
+      teardownLink(async, link);
+    });
+  });
+
+  test('stale feed work neither blocks nor pauses a replacement link', () {
+    fakeAsync((async) {
+      final (link, _) = wire();
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+
+      final firstGate = Completer<void>();
+      final staleBackend = link.backend!;
+      final errors = <Object>[];
+      unawaited(
+        link.runOta((_) => firstGate.future).then((_) {}, onError: errors.add),
+      );
+      // A second operation on the old transport queues behind the first.
+      unawaited(
+        staleBackend.readDeviceName().then((_) {}, onError: errors.add),
+      );
+      async.elapse(const Duration(seconds: 1));
+
+      unawaited(MockBlePlatform.instance.disconnect(deviceId));
+      async.flushMicrotasks();
+      unawaited(link.connectToDevice(deviceId));
+      // The old chain is still occupied; the replacement has its own chain.
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+
+      MockBlePlatform.instance.gattOpLog.clear();
+      firstGate.completeError(StateError('release stale operations'));
+      async.elapse(const Duration(milliseconds: 100));
+      expect(errors, hasLength(2));
+      // The stale queued read fails against its aborted client without
+      // touching the replacement transport's ADC feed.
+      expect(MockBlePlatform.instance.gattOpLog, isEmpty);
+      expect(link.isStreaming, isTrue);
+
+      teardownLink(async, link);
+    });
+  });
+
+  test('disconnect aborts protocol work before the platform settles', () {
+    fakeAsync((async) {
+      MockBlePlatform.instance.kvsCommandDelay = const Duration(seconds: 1);
+      final (link, seen) = wire();
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(milliseconds: 2500));
+      expect(link.linkState, BtLinkState.readingConstants);
+
+      MockBlePlatform.instance.hangDisconnect = true;
+      unawaited(link.disconnectSelectedDevice());
+      async.flushMicrotasks();
+      expect(link.linkState, BtLinkState.disconnecting);
+      expect(link.backend, isNull);
+
+      async.elapse(const Duration(seconds: 4));
+      expect(link.linkState, BtLinkState.idle);
+      expect(seen.whereType<BleDisconnectTimeout>(), hasLength(1));
+    });
+  });
+
   test('a second connect while connecting is a no-op', () {
     fakeAsync((async) {
       final (link, seen) = wire();
@@ -1262,9 +1361,9 @@ void main() {
         expect(secondError, isA<StateError>());
         expect(secondBodyCalls, 0);
         expect(MockBlePlatform.instance.otaDataBytes, 600);
+        // OTA cleanup skipped GATT after the accepted flash disposed the link.
         expect(MockBlePlatform.instance.otaControlSubscriptionLog, [
           BleInputProperty.notification,
-          BleInputProperty.disabled,
         ]);
         expect(MockBlePlatform.instance.gattOpLog, ['adc:unsub']);
         expect(MockBlePlatform.instance.disconnectCalls, [deviceId]);
@@ -1344,6 +1443,41 @@ void main() {
       async.elapse(const Duration(milliseconds: 100));
       expect(link.linkState, BtLinkState.idle);
       expect(seen, isEmpty);
+    });
+  });
+
+  test('revert does not disguise a flash-listener failure as refusal', () {
+    fakeAsync((async) {
+      var rejectDelivery = false;
+      var deliveries = 0;
+      final (link, _) = wire(
+        onDeviceFlash: (_) {
+          deliveries++;
+          if (rejectDelivery) throw StateError('listener failed');
+        },
+      );
+      MockBlePlatform.instance.seedKvs(
+        KvsSnapshot(
+          factory: demoKvs.factory,
+          user: {...demoKvs.user, ...demoKvs.factory},
+        ),
+      );
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      rejectDelivery = true;
+
+      Object? error;
+      unawaited(
+        link.revertUserCalibration().then(
+          (value) => error = StateError('unexpected result: $value'),
+          onError: (Object e) => error = e,
+        ),
+      );
+      async.elapse(const Duration(seconds: 4));
+
+      expect(error.toString(), contains('listener failed'));
+      expect(deliveries, 2);
+      teardownLink(async, link);
     });
   });
 

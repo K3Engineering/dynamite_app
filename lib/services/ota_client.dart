@@ -134,6 +134,9 @@ class OtaClient {
   }) async {
     if (_aborted) throw StateError('OTA session aborted');
     final waiting = Completer<Uint8List>();
+    // abort() can fire while writeControl is still pending, before the await
+    // below installs an error listener.
+    waiting.future.ignore();
     _waiting = waiting;
     try {
       await writeControl(bytes, withoutResponse: withoutResponse);

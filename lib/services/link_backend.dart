@@ -2,12 +2,8 @@ import 'dart:typed_data';
 
 import '../models/device_flash.dart';
 
-/// A feed-maintenance operation. [afterResume] stays in the serialized queue
-/// but runs after the feed envelope's resubscribe.
-typedef WithFeedPaused = Future<T> Function<T>(
-  Future<T> Function() body, {
-  Future<void> Function()? afterResume,
-});
+/// A feed-maintenance operation, serialized with other operations on its link.
+typedef WithFeedPaused = Future<T> Function<T>(Future<T> Function() body);
 
 /// The device-side operations of the active link: the flash document round
 /// trip, the Settings-namespace device name, and KVS frame routing.

@@ -195,6 +195,23 @@ void main() {
     });
   });
 
+  test('command timeout includes a write that never completes', () {
+    fakeAsync((async) {
+      var timeouts = 0;
+      final client = KvsClient(
+        write: (_) => Completer<void>().future,
+        onTimeout: () => timeouts++,
+      );
+      final errors = <Object>[];
+      track(client.get(kvsFolderFactory, 'ch0.r'), errors);
+
+      async.elapse(const Duration(seconds: 4));
+
+      expect(timeouts, 1);
+      expect(errors.single, isA<TimeoutException>());
+    });
+  });
+
   test('a busy answer fails fast; unlocked, the command resolves', () {
     fakeAsync((async) {
       final client = wire();

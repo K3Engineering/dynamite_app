@@ -127,7 +127,7 @@ final class NoLink extends Link {
 }
 
 final class Connecting extends Link {
-  const new(this.transport);
+  new(this.transport);
 
   @override
   final LinkTransport transport;
@@ -192,7 +192,7 @@ final class Ready extends Link {
 }
 
 final class Closing extends Link {
-  const new(this.transport);
+  new(this.transport);
 
   @override
   final LinkTransport transport;
@@ -400,22 +400,17 @@ class BleLinkManager extends ChangeNotifier {
   final bool isWeb;
   final DateTime Function() _now;
 
-  /// [KvsClient] serializes individual KVS commands, but nothing stops one
-  /// envelope's resubscribe from landing inside the NEXT envelope's command
-  /// body — locking the device against its remaining commands. Envelopes
-  /// chain here so each runs to completion before the next starts.
-  final FutureChain _feedMaintenance = FutureChain();
-
   /// Run [body] as an OTA flash session against the live link. A body that
   /// RETURNS had its image accepted — the device reboots into it ~0.5 s later
   /// (see [OtaClient.flash]) — so the link is then ended via the
   /// requested-disconnect path. A body that THROWS keeps the link (nothing
   /// rebooted): the feed resumes and the error reaches the caller.
   Future<T> runOta<T>(Future<T> Function(OtaClient client) body) {
-    final transport = _link.transport;
-    if (transport == null) {
-      throw StateError('OTA requires a connected device');
+    final link = _link;
+    if (link is! Ready) {
+      throw StateError('OTA requires a ready device');
     }
+    final transport = link.transport;
     return transport.runOta((client) async {
       final result = await body(client);
       // The reboot may already have dropped the link on its own.
@@ -431,15 +426,10 @@ class BleLinkManager extends ChangeNotifier {
   /// resubscribe. The feed's counter jump on resume surfaces as a gap via the
   /// decoder's continuity check.
   Future<T> _withFeedPaused<T>(
-    Future<T> Function() body, {
-    Future<void> Function()? afterResume,
-  }) => _feedMaintenance.run(() async {
-    try {
-      return await _feedPausedEnvelope(body);
-    } finally {
-      if (afterResume case final cleanup?) await cleanup();
-    }
-  });
+    LinkTransport transport,
+    FutureChain feedMaintenance,
+    Future<T> Function() body,
+  ) => feedMaintenance.run(() => _feedPausedEnvelope(transport, body));
 
   /// The firmware releases its device lock inside the CCC-write callback,
   /// ahead of the unsubscribe's completion — but only when the platform
@@ -448,10 +438,12 @@ class BleLinkManager extends ChangeNotifier {
   /// command timeout. 300 ms is a guess, not measured.
   static const Duration _feedPauseSettle = Duration(milliseconds: 300);
 
-  Future<T> _feedPausedEnvelope<T>(Future<T> Function() body) async {
+  Future<T> _feedPausedEnvelope<T>(
+    LinkTransport transport,
+    Future<T> Function() body,
+  ) async {
     final link = _link;
-    if (link is! Ready) return body();
-    final transport = link.info.transport;
+    if (link is! Ready || !identical(link.transport, transport)) return body();
     await transport.unsubscribeFromAdcFeed();
     await Future.pause(_feedPauseSettle);
     try {
@@ -498,6 +490,7 @@ class BleLinkManager extends ChangeNotifier {
     }
     final stored = trimmed.isEmpty ? null : trimmed;
     final ok = await link.transport.backend!.storeDeviceName(stored);
+    if (!identical(_link, link)) return false;
     if (ok) {
       link.info.storedName = stored;
       notifyListeners();
@@ -513,17 +506,18 @@ class BleLinkManager extends ChangeNotifier {
     final link = _link;
     if (link is! Ready) return false;
     final backend = link.backend!;
+    late final KvsSnapshot snapshot;
     try {
       await backend.revertUserCalibration();
-      final snapshot = await backend.readKvsSnapshot();
-      if (!identical(_link, link)) return false;
-      onDeviceFlash(
-        DeviceFlash.fromKvs(snapshot, pgaGains: link.adcConfig.pgaGains),
-      );
-      return true;
+      snapshot = await backend.readKvsSnapshot();
     } catch (_) {
       return false;
     }
+    if (!identical(_link, link)) return false;
+    onDeviceFlash(
+      DeviceFlash.fromKvs(snapshot, pgaGains: link.adcConfig.pgaGains),
+    );
+    return true;
   }
 
   new({
@@ -928,7 +922,8 @@ class BleLinkManager extends ChangeNotifier {
 
   Future<void> _beginLink(LinkTransport transport) async {
     if (!_beginConnect(transport.deviceId)) return;
-    _link = Connecting(transport);
+    final connecting = Connecting(transport);
+    _link = connecting;
     notifyListeners();
 
     try {
@@ -940,9 +935,7 @@ class BleLinkManager extends ChangeNotifier {
     } catch (e) {
       // Already torn down by a cancel, a newer attempt, or a refusal that
       // arrived via [_onConnectionChange] first.
-      if (_link is! Connecting || _link.deviceId != transport.deviceId) {
-        return;
-      }
+      if (!identical(_link, connecting)) return;
       _outcomes[transport.deviceId] = ConnectRefused(
         e is TimeoutException
             ? ConnectFailureKind.timeout
@@ -954,9 +947,7 @@ class BleLinkManager extends ChangeNotifier {
     }
 
     // A refusal callback may have torn the attempt down during connect.
-    if (_link is! Connecting || _link.deviceId != transport.deviceId) {
-      return;
-    }
+    if (!identical(_link, connecting)) return;
     unawaited(_runPostConnectSetup(transport));
   }
 
@@ -971,10 +962,16 @@ class BleLinkManager extends ChangeNotifier {
 
   Future<void> connectToDevice(String deviceId) async {
     final device = _devices[deviceId];
-    final transport = BleLinkTransport(
+    // Feed pauses serialize only against their own link; stale work must not
+    // delay or pause the next connection's feed.
+    final feedMaintenance = FutureChain();
+    late final BleLinkTransport transport;
+    Future<T> withFeedPaused<T>(Future<T> Function() body) =>
+        _withFeedPaused(transport, feedMaintenance, body);
+    transport = BleLinkTransport(
       deviceId: deviceId,
       displayName: device?.name ?? deviceId,
-      withFeedPaused: _withFeedPaused,
+      withFeedPaused: withFeedPaused,
       onKvsTimeout: _onKvsTimeout,
       connectTimeout: connectTimeout,
       disconnectTimeout: disconnectTimeout,
@@ -1007,7 +1004,10 @@ class BleLinkManager extends ChangeNotifier {
     if (link.isLinkUp) {
       _stampAlive(deviceId);
     }
-    _link = Closing(transport);
+    final closing = Closing(transport);
+    _link = closing;
+    // Stop protocol activity before waiting for the platform disconnect.
+    transport.dispose();
     notifyListeners();
 
     await transport.disconnect();
@@ -1016,7 +1016,7 @@ class BleLinkManager extends ChangeNotifier {
     if (!transport.isSimulated) {
       await UniversalBle.getBluetoothAvailabilityState();
     }
-    if (_link is Closing && _link.deviceId == deviceId) {
+    if (identical(_link, closing)) {
       if (!transport.isSimulated) {
         debugPrint('Disconnect did not settle for $deviceId; forcing idle');
       }

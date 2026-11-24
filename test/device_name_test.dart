@@ -8,6 +8,7 @@ import 'package:universal_ble/universal_ble.dart';
 import 'package:dynamite_app/models/device_name.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
+import 'package:dynamite_app/services/demo_device.dart';
 import 'package:dynamite_app/services/kvs_protocol.dart';
 
 import 'helpers/mockble.dart';
@@ -26,6 +27,7 @@ void main() {
     MockBlePlatform.instance.resetKnobs();
     final link = BleLinkManager(
       events: AppEvents(),
+      demo: DemoDevice(),
       onDeviceFlash: (_) {},
       onAdcData: (_) {},
       onSampleRate: (_) {},
@@ -154,6 +156,22 @@ void main() {
       expect(mock.kvsCommandLog, isEmpty);
       expect(mock.kvsStore[kvsFolderSettings], isEmpty);
 
+      teardown();
+    });
+  });
+
+  test('a name write finishing after disconnect returns false', () {
+    fakeAsync((async) {
+      final (link, teardown) = wire(async: async);
+      unawaited(link.connectToDemoDevice());
+      async.elapse(const Duration(milliseconds: 100));
+
+      bool? result;
+      unawaited(link.setDeviceName('Stale').then((ok) => result = ok));
+      unawaited(link.disconnectSelectedDevice());
+      async.flushMicrotasks();
+
+      expect(result, false);
       teardown();
     });
   });

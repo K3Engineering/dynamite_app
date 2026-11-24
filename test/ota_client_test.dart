@@ -193,6 +193,29 @@ void main() {
     });
   });
 
+  test('abort during a pending control write has no unhandled error', () {
+    fakeAsync((async) {
+      final writeGate = Completer<void>();
+      final client = OtaClient(
+        chunkSize: chunkSize,
+        ackTimeout: ackTimeout,
+        writeControl: (bytes, {withoutResponse = false}) => writeGate.future,
+        writeData: (_) => Future<void>.value(),
+      );
+      final errors = <Object>[];
+      track(client.flash(image: Uint8List(10)), errors);
+      async.flushMicrotasks();
+
+      client.abort();
+      async.flushMicrotasks();
+      expect(errors, isEmpty);
+
+      writeGate.complete();
+      async.flushMicrotasks();
+      expect(errors.single, isA<StateError>());
+    });
+  });
+
   test('abort fails the live wait', () {
     fakeAsync((async) {
       final (client, _) = wire();

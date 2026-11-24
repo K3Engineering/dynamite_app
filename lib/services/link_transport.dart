@@ -263,59 +263,83 @@ class BleLinkTransport implements LinkTransport {
   void handleOtaFrame(Uint8List data) => _otaClient?.handleNotification(data);
 
   @override
-  Future<T> runOta<T>(Future<T> Function(OtaClient client) body) {
-    OtaClient? session;
-    return withFeedPaused(
-      () async {
-        // An earlier feed-maintenance operation may have disposed this
-        // transport while this OTA was queued.
-        if (_disposed) throw StateError('OTA on a disposed link transport');
-        await UniversalBle.subscribeNotifications(
-          deviceId,
-          otaServiceId,
-          btChrOtaControl,
-        );
-        // Chunk cap mirrors the reference client (min(mtu - 3, 244)). Web never
-        // reports the negotiated MTU; the platforms in use negotiate 247, so
-        // fall through to the 247 -> 244 cap.
-        final mtu = _mtu;
-        final client = OtaClient(
-          chunkSize: mtu == null ? 244 : min(mtu - 3, 244),
-          writeControl: (bytes, {withoutResponse = false}) =>
-              UniversalBle.write(
-                deviceId,
-                otaServiceId,
-                btChrOtaControl,
-                bytes,
-                withoutResponse: withoutResponse,
-              ),
-          writeData: (bytes) =>
-              UniversalBle.write(deviceId, otaServiceId, btChrOtaData, bytes),
-        );
-        session = client;
-        _otaClient = client;
-        return body(client);
-      },
-      afterResume: () async {
-        final client = session;
-        if (client == null) return;
-        _otaClient = null;
-        client.abort();
+  Future<T> runOta<T>(Future<T> Function(OtaClient client) body) =>
+      withFeedPaused(() async {
+        OtaClient? session;
         try {
-          await UniversalBle.unsubscribe(
+          // An earlier feed-maintenance operation or a disconnect during the
+          // subscribe may have disposed this transport.
+          if (_disposed) throw StateError('OTA on a disposed link transport');
+          await UniversalBle.subscribeNotifications(
             deviceId,
             otaServiceId,
             btChrOtaControl,
           );
-        } catch (_) {
-          // Teardown hygiene only; the session already settled.
+          if (_disposed) throw StateError('OTA on a disposed link transport');
+
+          // Chunk cap mirrors the reference client (min(mtu - 3, 244)). Web
+          // never reports the negotiated MTU; the platforms in use negotiate
+          // 247, so fall through to the 247 -> 244 cap.
+          final mtu = _mtu;
+          final client = OtaClient(
+            chunkSize: mtu == null ? 244 : min(mtu - 3, 244),
+            writeControl: (bytes, {withoutResponse = false}) =>
+                UniversalBle.write(
+                  deviceId,
+                  otaServiceId,
+                  btChrOtaControl,
+                  bytes,
+                  withoutResponse: withoutResponse,
+                ),
+            writeData: (bytes) =>
+                UniversalBle.write(deviceId, otaServiceId, btChrOtaData, bytes),
+          );
+          session = client;
+          _otaClient = client;
+          return await body(client);
+        } finally {
+          final client = session;
+          if (client != null) {
+            _otaClient = null;
+            client.abort();
+            if (!_disposed) {
+              try {
+                await UniversalBle.unsubscribe(
+                  deviceId,
+                  otaServiceId,
+                  btChrOtaControl,
+                );
+              } catch (_) {
+                // Teardown hygiene only; the session already settled.
+              }
+            }
+          }
         }
-      },
-    );
-  }
+      });
 
   @override
   void attachFeedSink(void Function(Uint8List data) sink) {}
+
+  /// One retry on failure. A transient BLE hiccup is not a broken board, so the
+  /// link's essential reads and channel bring-up get a second chance; a
+  /// persistent failure still propagates (the caller fails the connection).
+  /// Characteristic absence is permanent within this service discovery and is
+  /// handled by the caller (optional Software Revision, or setup failure).
+  Future<T> _retryOnce<T>(Future<T> Function() op) async {
+    try {
+      return await op();
+    } on UniversalBleException catch (e) {
+      if (_disposed || e.code == UniversalBleErrorCode.characteristicNotFound) {
+        rethrow;
+      }
+      debugPrint('Link transport read failed, retrying once: $e');
+      return op();
+    } catch (e) {
+      if (_disposed) rethrow;
+      debugPrint('Link transport read failed, retrying once: $e');
+      return op();
+    }
+  }
 
   @override
   void dispose() {
@@ -325,23 +349,5 @@ class BleLinkTransport implements LinkTransport {
     _backend = null;
     _otaClient?.abort();
     _otaClient = null;
-  }
-}
-
-/// One retry on failure. A transient BLE hiccup is not a broken board, so the
-/// link's essential reads and channel bring-up get a second chance; a
-/// persistent failure still propagates (the caller fails the connection).
-/// Characteristic absence is permanent within this service discovery and is
-/// handled by the caller instead (optional Software Revision, or setup failure).
-Future<T> _retryOnce<T>(Future<T> Function() op) async {
-  try {
-    return await op();
-  } on UniversalBleException catch (e) {
-    if (e.code == UniversalBleErrorCode.characteristicNotFound) rethrow;
-    debugPrint('Link transport read failed, retrying once: $e');
-    return op();
-  } catch (e) {
-    debugPrint('Link transport read failed, retrying once: $e');
-    return op();
   }
 }

@@ -126,8 +126,9 @@ class KvsClient {
       final command = _queue.first;
       _current = command;
       try {
-        await write(Uint8List.fromList(utf8.encode(command.request)));
-        await command.completer.future.timeout(commandTimeout);
+        await write(Uint8List.fromList(utf8.encode(command.request)))
+            .then((_) => command.completer.future)
+            .timeout(commandTimeout);
       } on TimeoutException catch (e) {
         // An answer that landed inside the write window still proves the link
         // answered. Without one, continuing could match this command's late
