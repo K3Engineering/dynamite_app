@@ -73,19 +73,17 @@ const List<int> _kOsrTable = [128, 256, 512, 1024, 2048, 4096, 8192, 16384];
 /// packed little-endian: version u8, id u16, status u16, mode u16, clock
 /// u16, pga u16). The CLOCK register carries the data-rate setting: 64 when
 /// its TBM bit is set, else the OSR field — sample_rate =
-/// [kAdcClockHz] / 2 / OSR, an integer for every selectable configuration.
-/// The GAIN register holds four 4-bit PGA fields, gain = 2^field. Null on a
-/// short buffer, an unknown struct version, or a rate that doesn't divide
-/// exactly (an impossible register value says this parse or the readback is
-/// wrong) — a failed parse is a failed read: the link manager fails the
-/// connection rather than guess the config.
+/// [kAdcClockHz] / 2 / OSR. Every selectable divisor divides the modulator
+/// clock exactly. The GAIN register holds four 4-bit PGA fields, gain =
+/// 2^field. Null on a short buffer or unknown struct version — a failed parse
+/// is a failed read: the link manager fails the connection rather than guess
+/// the config.
 AdcConfig? parseAdcConfig(Uint8List b) {
   const structBytes = 11;
   if (b.length < structBytes || b[0] != 1) return null;
   final clock = b[7] | (b[8] << 8);
   final osr = (clock & 0x20) != 0 ? 64 : _kOsrTable[(clock >> 2) & 0x7];
   final divisor = _kModulatorDivider * osr;
-  if (kAdcClockHz % divisor != 0) return null;
   final pga = b[9] | (b[10] << 8);
   return (
     pgaGains: [

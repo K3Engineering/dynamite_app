@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:fake_async/fake_async.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:universal_ble/universal_ble.dart';
 
@@ -66,6 +66,8 @@ void main() {
     void Function(DeviceFlash flash)? onDeviceFlash,
     void Function(Uint8List data)? onAdcData,
     void Function(int sampleRateHz)? onSampleRate,
+    bool? isWeb,
+    DateTime Function()? now,
   }) {
     final events = AppEvents();
     final seen = <AppEvent>[];
@@ -77,6 +79,8 @@ void main() {
       onDeviceFlash: onDeviceFlash ?? (_) {},
       onAdcData: onAdcData ?? (_) {},
       onSampleRate: onSampleRate ?? (_) {},
+      isWeb: isWeb ?? kIsWeb,
+      now: now,
     );
     return (link, seen);
   }
@@ -89,19 +93,13 @@ void main() {
     async.elapse(const Duration(seconds: 4));
   }
 
-  /// Let the constructor's startup work drain through the shared static
-  /// command queue: setting [UniversalBle.onAvailabilityChange] makes
-  /// universal_ble issue its own availability query AND the manager issues
-  /// another ([BleLinkManager._updateBluetoothState]) — two 200 ms mock
-  /// round-trips, serialised, so the second lands at ~400 ms. A test that
-  /// exits its [fakeAsync] scope with that command still pending wedges the
-  /// queue for every later test (the pending timer belongs to the dead fake
-  /// zone and never fires). Tests that don't otherwise elapse past ~400 ms
-  /// must run this before exiting. (The manager's own [AvailabilityState]
-  /// still resolves at ~200 ms — the setter's callback sets it — which is
-  /// why this wedge is invisible in the wedging test itself.)
+  /// Let the startup availability query drain through the shared static
+  /// command queue. Assigning [UniversalBle.onAvailabilityChange] starts the
+  /// query; the manager relies on that same callback for its initial state. A
+  /// test that exits its [fakeAsync] scope with the query pending wedges the
+  /// queue for later tests (its timer belongs to the dead fake zone).
   void settleStartup(FakeAsync async) =>
-      async.elapse(const Duration(milliseconds: 500));
+      async.elapse(const Duration(milliseconds: 300));
 
   test('connect reaches streaming and notifications flow to onAdcData', () {
     fakeAsync((async) {
@@ -477,6 +475,25 @@ void main() {
     });
   });
 
+  test('a connect attempt clears only its own device outcome', () {
+    fakeAsync((async) {
+      final (link, _) = wire();
+      MockBlePlatform.instance.failConnect = true;
+      unawaited(link.connectToDevice(deviceId).catchError((_) {}));
+      async.elapse(const Duration(seconds: 2));
+      expect(link.outcomeFor(deviceId), isA<ConnectRefused>());
+
+      MockBlePlatform.instance.failConnect = false;
+      unawaited(link.connectToDemoDevice());
+      async.elapse(const Duration(milliseconds: 100));
+
+      expect(link.outcomeFor(deviceId), isA<ConnectRefused>());
+      expect(link.outcomeFor(demoDeviceId), isNull);
+      unawaited(link.disconnectSelectedDevice());
+      async.elapse(const Duration(milliseconds: 100));
+    });
+  });
+
   test('a duplicate connect event while streaming is ignored', () {
     fakeAsync((async) {
       final (link, seen) = wire();
@@ -537,6 +554,30 @@ void main() {
       final callsAtTeardown = MockBlePlatform.instance.readRssiCalls;
       async.elapse(BleLinkManager.rssiPollInterval * 3);
       expect(MockBlePlatform.instance.readRssiCalls, callsAtTeardown);
+    });
+  });
+
+  test('a slow RSSI read does not overlap later polls', () {
+    fakeAsync((async) {
+      final (link, _) = wire();
+      MockBlePlatform.instance.rssiDelay = const Duration(seconds: 3);
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+      expect(MockBlePlatform.instance.readRssiCalls, 1);
+
+      async.elapse(BleLinkManager.rssiPollInterval);
+      expect(MockBlePlatform.instance.readRssiCalls, 1);
+
+      // The first read settles at seven seconds and waits another interval;
+      // it cannot accumulate work on the old two-second ticks.
+      async.elapse(BleLinkManager.rssiPollInterval);
+      expect(MockBlePlatform.instance.readRssiCalls, 1);
+
+      // The completed first read schedules exactly one successor.
+      async.elapse(BleLinkManager.rssiPollInterval);
+      expect(MockBlePlatform.instance.readRssiCalls, 2);
+      teardownLink(async, link);
     });
   });
 
@@ -855,6 +896,19 @@ void main() {
     });
   });
 
+  test('a setup-time KVS timeout remains a setup failure', () {
+    fakeAsync((async) {
+      MockBlePlatform.instance.kvsDropCommands = true;
+      final (link, seen) = wire();
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 6));
+
+      expect(link.linkState, BtLinkState.idle);
+      expect(link.outcomeFor(deviceId), isA<SetupFailed>());
+      expect(seen, [isA<BleConnectionFailed>()]);
+    });
+  });
+
   test('an unprovisioned board (empty KVS) connects and streams', () {
     fakeAsync((async) {
       final mock = MockBlePlatform.instance;
@@ -1042,6 +1096,30 @@ void main() {
     });
   });
 
+  test('a streaming-time KVS timeout tears down the link', () {
+    fakeAsync((async) {
+      final (link, seen) = wire();
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+
+      MockBlePlatform.instance.kvsDropCommands = true;
+      Object? error;
+      unawaited(
+        link
+            .setDeviceName('Rig 7')
+            .then((_) {}, onError: (Object e) => error = e),
+      );
+      async.elapse(const Duration(seconds: 4));
+
+      expect(error, isA<TimeoutException>());
+      expect(link.linkState, BtLinkState.idle);
+      expect(link.backend, isNull);
+      expect(seen, [isA<BleConnectionLost>()]);
+      expect(MockBlePlatform.instance.disconnectCalls, [deviceId]);
+    });
+  });
+
   test('a completed flash ends the link: no feed resume, no lost notice', () {
     fakeAsync((async) {
       final (link, seen) = wire();
@@ -1071,6 +1149,50 @@ void main() {
       expect(MockBlePlatform.instance.disconnectCalls, [deviceId]);
       expect(seen, isEmpty);
       expect(link.linkBusy, isFalse);
+    });
+  });
+
+  test('concurrent OTA requests serialize subscription through cleanup', () {
+    fakeAsync((async) {
+      final (link, seen) = wire();
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+
+      final firstGate = Completer<void>();
+      final secondGate = Completer<void>();
+      final errors = <Object>[];
+      void track(Future<void> future) {
+        unawaited(future.then((_) {}, onError: errors.add));
+      }
+
+      track(link.runOta((_) => firstGate.future));
+      track(link.runOta((_) => secondGate.future));
+      async.elapse(const Duration(seconds: 1));
+      expect(MockBlePlatform.instance.otaControlSubscriptionLog, [
+        BleInputProperty.notification,
+      ]);
+
+      firstGate.completeError(StateError('first OTA done'));
+      async.elapse(const Duration(seconds: 1));
+      expect(MockBlePlatform.instance.otaControlSubscriptionLog, [
+        BleInputProperty.notification,
+        BleInputProperty.disabled,
+        BleInputProperty.notification,
+      ]);
+
+      secondGate.completeError(StateError('second OTA done'));
+      async.elapse(const Duration(seconds: 1));
+      expect(MockBlePlatform.instance.otaControlSubscriptionLog, [
+        BleInputProperty.notification,
+        BleInputProperty.disabled,
+        BleInputProperty.notification,
+        BleInputProperty.disabled,
+      ]);
+      expect(errors, hasLength(2));
+      expect(link.isStreaming, isTrue);
+      expect(seen, isEmpty);
+      teardownLink(async, link);
     });
   });
 
@@ -1131,11 +1253,8 @@ void main() {
     fakeAsync((async) {
       var received = 0;
       final (link, seen) = wire(onAdcData: (_) => received++);
-      // Drain the constructor's two availability queries (see [settleStartup])
-      // — this test's own work is only ~200 ms of fake time, well under the
-      // ~400 ms they need, and their pending timers would otherwise wedge the
-      // shared 'global' queue bucket (availability + scan commands) for every
-      // later test in the file.
+      // This test's work is shorter than the startup availability query;
+      // drain it so its timer does not outlive this fake zone.
       settleStartup(async);
 
       unawaited(link.connectToDemoDevice());
@@ -1147,6 +1266,26 @@ void main() {
       async.elapse(const Duration(milliseconds: 100));
       expect(link.linkState, BtLinkState.idle);
       expect(seen, isEmpty);
+    });
+  });
+
+  test('revert does not deliver a document after its link goes stale', () {
+    fakeAsync((async) {
+      var deliveries = 0;
+      final (link, _) = wire(onDeviceFlash: (_) => deliveries++);
+      settleStartup(async);
+      unawaited(link.connectToDemoDevice());
+      async.elapse(const Duration(milliseconds: 100));
+      expect(deliveries, 1);
+
+      bool? result;
+      unawaited(link.revertUserCalibration().then((value) => result = value));
+      unawaited(link.disconnectSelectedDevice());
+      async.elapse(const Duration(milliseconds: 100));
+
+      expect(result, isFalse);
+      expect(deliveries, 1);
+      expect(link.linkState, BtLinkState.idle);
     });
   });
 
@@ -1171,6 +1310,56 @@ void main() {
       expect(seen, isEmpty);
 
       teardownLink(async, link);
+    });
+  });
+
+  test('web reconnect settling uses the injected clock and platform mode', () {
+    fakeAsync((async) {
+      final (link, _) = wire(
+        isWeb: true,
+        now: () =>
+            DateTime.fromMillisecondsSinceEpoch(async.elapsed.inMilliseconds),
+      );
+      settleStartup(async);
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+      expect(link.supportsScanRssi, isFalse);
+      expect(link.negotiatedMtu, isNull);
+      expect(link.connectedDeviceInfo!.serial, isNull);
+      expect(MockBlePlatform.instance.readRssiCalls, 0);
+
+      unawaited(link.disconnectSelectedDevice());
+      async.elapse(const Duration(milliseconds: 300));
+      expect(link.linkState, BtLinkState.idle);
+      expect(link.reconnectPendingFor(deviceId), isTrue);
+      expect(link.canConnectTo(deviceId), isFalse);
+
+      async.elapse(
+        BleLinkManager.reconnectSettleDelay - const Duration(milliseconds: 301),
+      );
+      expect(link.reconnectPendingFor(deviceId), isTrue);
+      async.elapse(const Duration(milliseconds: 1));
+      expect(link.reconnectPendingFor(deviceId), isFalse);
+      expect(link.canConnectTo(deviceId), isTrue);
+    });
+  });
+
+  test('hot-restart shutdown invalidates post-connect setup synchronously', () {
+    fakeAsync((async) {
+      var deliveries = 0;
+      final (link, seen) = wire(onDeviceFlash: (_) => deliveries++);
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(milliseconds: 1500));
+      expect(link.linkState, BtLinkState.connected);
+
+      unawaited(link.shutdownForHotRestart());
+      expect(link.linkState, BtLinkState.idle);
+      async.elapse(const Duration(seconds: 4));
+
+      expect(deliveries, 0);
+      expect(link.isStreaming, isFalse);
+      expect(seen, isEmpty);
     });
   });
 

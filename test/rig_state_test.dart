@@ -68,9 +68,6 @@ class _FakeBackend implements LinkBackend {
 
   @override
   void handleKvsFrame(Uint8List data) {}
-
-  @override
-  void dispose() {}
 }
 
 void main() {

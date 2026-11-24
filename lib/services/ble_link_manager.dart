@@ -79,15 +79,15 @@ class LinkInfo {
   final int? mtu;
   final AdcConfig adcConfig;
   final LinkTelemetry telemetry;
-
-  String get deviceId => transport.deviceId;
 }
 
 sealed class Link {
   const new();
 
-  String get deviceId;
-  LinkTransport? get transport;
+  @nonVirtual
+  String get deviceId => transport?.deviceId ?? '';
+
+  LinkTransport? get transport => null;
   LinkTelemetry? get telemetry => null;
   String? get storedName => null;
   DeviceInfo? get deviceInfo => null;
@@ -99,10 +99,15 @@ sealed class Link {
   LinkBackend? get backend => transport?.backend;
 
   /// True during post-connect setup and while streaming.
-  bool get isLinkUp;
+  @nonVirtual
+  bool get isLinkUp => switch (state) {
+    .connected || .readingConstants || .subscribing || .streaming => true,
+    .idle || .connecting || .disconnecting => false,
+  };
 
   /// Feed subscribed. Not proof of data flow — see deriveFeedHealth.
-  bool get isStreaming;
+  @nonVirtual
+  bool get isStreaming => state == BtLinkState.streaming;
 
   BtLinkState get state;
 
@@ -118,18 +123,6 @@ final class NoLink extends Link {
   const new();
 
   @override
-  String get deviceId => '';
-
-  @override
-  LinkTransport? get transport => null;
-
-  @override
-  bool get isLinkUp => false;
-
-  @override
-  bool get isStreaming => false;
-
-  @override
   BtLinkState get state => BtLinkState.idle;
 }
 
@@ -138,15 +131,6 @@ final class Connecting extends Link {
 
   @override
   final LinkTransport transport;
-
-  @override
-  String get deviceId => transport.deviceId;
-
-  @override
-  bool get isLinkUp => false;
-
-  @override
-  bool get isStreaming => false;
 
   @override
   BtLinkState get state => BtLinkState.connecting;
@@ -174,16 +158,7 @@ final class SettingUp extends Link {
   String? storedName;
 
   @override
-  String get deviceId => transport.deviceId;
-
-  @override
   DeviceInfo? get deviceInfo => info;
-
-  @override
-  bool get isLinkUp => true;
-
-  @override
-  bool get isStreaming => false;
 
   @override
   BtLinkState get state => phase;
@@ -196,9 +171,6 @@ final class Ready extends Link {
 
   @override
   LinkTransport get transport => info.transport;
-
-  @override
-  String get deviceId => info.deviceId;
 
   @override
   LinkTelemetry get telemetry => info.telemetry;
@@ -216,12 +188,6 @@ final class Ready extends Link {
   AdcConfig get adcConfig => info.adcConfig;
 
   @override
-  bool get isLinkUp => true;
-
-  @override
-  bool get isStreaming => true;
-
-  @override
   BtLinkState get state => BtLinkState.streaming;
 }
 
@@ -232,30 +198,7 @@ final class Closing extends Link {
   final LinkTransport transport;
 
   @override
-  String get deviceId => transport.deviceId;
-
-  @override
-  bool get isLinkUp => false;
-
-  @override
-  bool get isStreaming => false;
-
-  @override
   BtLinkState get state => BtLinkState.disconnecting;
-}
-
-/// A setup pass checks [isCurrent] after every `await` and bails when false.
-/// Goes stale when [BleLinkManager._supersedeSetupPasses] runs or the active
-/// link is a different device.
-class _SetupToken {
-  const new(this._manager, this._epoch, this.deviceId);
-
-  final BleLinkManager _manager;
-  final int _epoch;
-  final String deviceId;
-
-  bool get isCurrent =>
-      _manager._setupEpoch == _epoch && _manager._link.deviceId == deviceId;
 }
 
 /// Chrome signals picker dismissal with UserCancelledDialogError /
@@ -313,7 +256,7 @@ class BleLinkManager extends ChangeNotifier {
 
   bool reconnectPendingFor(String deviceId) {
     final notBefore = _reconnectNotBefore[deviceId];
-    return notBefore != null && notBefore.isAfter(DateTime.now());
+    return notBefore != null && notBefore.isAfter(_now());
   }
 
   /// Whether [deviceId] can be connected right now: no link in flight and no
@@ -326,18 +269,11 @@ class BleLinkManager extends ChangeNotifier {
 
   Timer? _reconnectPoke;
 
-  int _setupEpoch = 0;
-
-  _SetupToken _setupTokenFor(String deviceId) =>
-      _SetupToken(this, _setupEpoch, deviceId);
-
-  void _supersedeSetupPasses() => _setupEpoch++;
-
   BtAvailability _bluetoothState = BtAvailability.unknown;
   BtAvailability get bluetoothState => _bluetoothState;
 
-  final List<DiscoveredDevice> _devices = [];
-  List<DiscoveredDevice> get devices => List.unmodifiableOf(_devices);
+  final Map<String, DiscoveredDevice> _devices = {};
+  List<DiscoveredDevice> get devices => List.unmodifiableOf(_devices.values);
 
   bool _isScanning = false;
   bool get isScanning => _isScanning;
@@ -363,11 +299,8 @@ class BleLinkManager extends ChangeNotifier {
   int? lastAliveMs(String deviceId) {
     final stamp = _lastAliveMs[deviceId];
     // Web scan results are picker picks, not adverts.
-    if (kIsWeb) return stamp;
-    final scanTs = _devices
-        .where((d) => d.deviceId == deviceId)
-        .firstOrNull
-        ?.timestamp;
+    if (isWeb) return stamp;
+    final scanTs = _devices[deviceId]?.timestamp;
     if (stamp == null) return scanTs;
     if (scanTs == null) return stamp;
     return stamp > scanTs ? stamp : scanTs;
@@ -376,7 +309,7 @@ class BleLinkManager extends ChangeNotifier {
   void _stampAlive(String deviceId) {
     if (deviceId.isEmpty) return;
     if (_link.transport?.isSimulated ?? false) return;
-    _lastAliveMs[deviceId] = DateTime.now().millisecondsSinceEpoch;
+    _lastAliveMs[deviceId] = _now().millisecondsSinceEpoch;
   }
 
   bool get isStreaming => _link.isStreaming;
@@ -417,12 +350,12 @@ class BleLinkManager extends ChangeNotifier {
   LinkBackend? get backend => _link.backend;
 
   /// Web throws notImplemented for UniversalBle.readRssi.
-  bool get _supportsRssi => !kIsWeb;
+  bool get _supportsRssi => !isWeb;
 
   /// On web scan results never carry RSSI: the "scan" is Chrome's
   /// requestDevice() picker, which has no RSSI, and the only other path
   /// (watchAdvertisements) is flag-gated and abandoned by Chrome.
-  bool get supportsScanRssi => !kIsWeb;
+  bool get supportsScanRssi => !isWeb;
 
   Timer? _rssiPollTimer;
 
@@ -463,6 +396,10 @@ class BleLinkManager extends ChangeNotifier {
   /// Null only in tests.
   final LinkTransport? _demo;
 
+  /// Platform/clock seams for web lifecycle tests on a VM.
+  final bool isWeb;
+  final DateTime Function() _now;
+
   /// [KvsClient] serializes individual KVS commands, but nothing stops one
   /// envelope's resubscribe from landing inside the NEXT envelope's command
   /// body — locking the device against its remaining commands. Envelopes
@@ -493,8 +430,16 @@ class BleLinkManager extends ChangeNotifier {
   /// device lock, so doc writes (and the verifying re-read) unsubscribe, run,
   /// resubscribe. The feed's counter jump on resume surfaces as a gap via the
   /// decoder's continuity check.
-  Future<T> _withFeedPaused<T>(Future<T> Function() body) =>
-      _feedMaintenance.run(() => _feedPausedEnvelope(body));
+  Future<T> _withFeedPaused<T>(
+    Future<T> Function() body, {
+    Future<void> Function()? afterResume,
+  }) => _feedMaintenance.run(() async {
+    try {
+      return await _feedPausedEnvelope(body);
+    } finally {
+      if (afterResume case final cleanup?) await cleanup();
+    }
+  });
 
   /// The firmware releases its device lock inside the CCC-write callback,
   /// ahead of the unsubscribe's completion — but only when the platform
@@ -528,6 +473,17 @@ class BleLinkManager extends ChangeNotifier {
     }
   }
 
+  void _onKvsTimeout(BleLinkTransport transport) {
+    final link = _link;
+    // During setup the ordinary setup-failure path owns teardown and its
+    // outcome. A stale client must never tear down a replacement link.
+    if (link is! Ready || !identical(link.transport, transport)) return;
+    final name = link.displayName;
+    _teardownLink(transport, releasePlatform: true);
+    _events.emit(BleConnectionLost(name));
+    notifyListeners();
+  }
+
   /// Input is trimmed; empty (post-trim) CLEARS the name. Returns false when
   /// the device rejects the write; throws on invalid input or no link.
   @useResult
@@ -554,16 +510,15 @@ class BleLinkManager extends ChangeNotifier {
   /// or the device refuses; the document is untouched then.
   @useResult
   Future<bool> revertUserCalibration() async {
-    final backend = this.backend;
-    if (backend == null) return false;
+    final link = _link;
+    if (link is! Ready) return false;
+    final backend = link.backend!;
     try {
       await backend.revertUserCalibration();
       final snapshot = await backend.readKvsSnapshot();
+      if (!identical(_link, link)) return false;
       onDeviceFlash(
-        DeviceFlash.fromKvs(
-          snapshot,
-          pgaGains: _link.adcConfig?.pgaGains ?? const [],
-        ),
+        DeviceFlash.fromKvs(snapshot, pgaGains: link.adcConfig.pgaGains),
       );
       return true;
     } catch (_) {
@@ -577,7 +532,9 @@ class BleLinkManager extends ChangeNotifier {
     required this._onAdcData,
     required this._onSampleRate,
     this._demo,
-  }) {
+    this.isWeb = kIsWeb,
+    DateTime Function()? now,
+  }) : _now = now ?? DateTime.now {
     // The package's default queue is `auto` (per-device on Android/Web/Linux,
     // parallel elsewhere). Explicit `perDevice` regardless: a command stuck
     // against a half-torn-down device (common on web when the user rapidly
@@ -603,7 +560,7 @@ class BleLinkManager extends ChangeNotifier {
       effect: _onFreshnessEdge,
     );
 
-    unawaited(_updateBluetoothState());
+    // Assigning onAvailabilityChange above also initiates the initial query.
   }
 
   Future<void> _updateBluetoothState() async {
@@ -621,7 +578,7 @@ class BleLinkManager extends ChangeNotifier {
   /// Throws when permissions are denied; a dismissed enable dialog completes
   /// normally with the radio still off.
   Future<void> _requestEnableBluetooth() async {
-    if (kIsWeb) return;
+    if (isWeb) return;
     await UniversalBle.requestPermissions();
     if (BleCapabilities.supportsBluetoothEnableApi) {
       await UniversalBle.enableBluetooth(timeout: _enableDialogTimeout);
@@ -633,21 +590,14 @@ class BleLinkManager extends ChangeNotifier {
     // Plain ADV packets often omit the name (it may only ride in the
     // SCAN_RSP) and some stacks deliver each PDU as a separate callback, so a
     // nameless re-advertisement must not blank the row title.
-    final existingIdx = _devices.indexWhere(
-      (d) => d.deviceId == result.deviceId,
-    );
+    final existing = _devices[result.deviceId];
     final mapped = DiscoveredDevice(
       deviceId: result.deviceId,
-      name:
-          result.name ?? (existingIdx >= 0 ? _devices[existingIdx].name : null),
+      name: result.name ?? existing?.name,
       rssi: result.rssi,
       timestamp: result.timestamp,
     );
-    if (existingIdx >= 0) {
-      _devices[existingIdx] = mapped;
-    } else {
-      _devices.add(mapped);
-    }
+    _devices[mapped.deviceId] = mapped;
     // A re-discovered device is a fresh platform handle.
     if (_outcomes[mapped.deviceId] is ConnectRefused) {
       _outcomes.remove(mapped.deviceId);
@@ -655,7 +605,7 @@ class BleLinkManager extends ChangeNotifier {
     notifyListeners();
     // Web: the "scan" is Chrome's requestDevice() picker; the one result is
     // the device the user just picked.
-    if (kIsWeb) {
+    if (isWeb) {
       unawaited(_connectPickedWebDevice(mapped));
     }
   }
@@ -693,8 +643,8 @@ class BleLinkManager extends ChangeNotifier {
     // On web startScan is the requestDevice() picker and yields exactly one
     // result; previously picked devices stay connectable (their handles live
     // in universal_ble's device map for the page session), so they are kept.
-    final previousDevices = List<DiscoveredDevice>.of(_devices);
-    if (!kIsWeb) {
+    final previousDevices = Map<String, DiscoveredDevice>.of(_devices);
+    if (!isWeb) {
       _devices.clear();
     }
     _isScanning = true;
@@ -716,7 +666,7 @@ class BleLinkManager extends ChangeNotifier {
         ..clear()
         ..addAll(previousDevices);
       notifyListeners();
-      if (kIsWeb && isWebPickerDismissal(e)) {
+      if (isWeb && isWebPickerDismissal(e)) {
         debugPrint('Web scan picker closed without a selection: $e');
         return;
       }
@@ -755,7 +705,8 @@ class BleLinkManager extends ChangeNotifier {
     if (transport.isSimulated || !_supportsRssi) {
       return;
     }
-    _rssiPollTimer = Timer.periodic(rssiPollInterval, (_) async {
+
+    Future<void> poll() async {
       if (!identical(_link.transport, transport) || !_link.isStreaming) {
         _stopRssiPolling();
         return;
@@ -767,9 +718,17 @@ class BleLinkManager extends ChangeNotifier {
           notifyListeners();
         }
       } catch (_) {
-        // Next tick retries.
+        // The next one-shot poll retries.
       }
-    });
+      // Schedule only after the read settles so slow reads cannot overlap.
+      if (identical(_link.transport, transport) && _link.isStreaming) {
+        _rssiPollTimer = Timer(rssiPollInterval, poll);
+      } else {
+        _stopRssiPolling();
+      }
+    }
+
+    _rssiPollTimer = Timer(rssiPollInterval, poll);
   }
 
   void _stopRssiPolling() {
@@ -783,14 +742,13 @@ class BleLinkManager extends ChangeNotifier {
   /// [_onConnectionChange]). Does not call [notifyListeners]; callers do.
   void _teardownLink(LinkTransport transport, {bool releasePlatform = false}) {
     final previous = _link;
-    _supersedeSetupPasses();
     transport.dispose();
     _stopRssiPolling();
 
-    if (kIsWeb &&
+    if (isWeb &&
         !transport.isSimulated &&
         previous.state != BtLinkState.connecting) {
-      _reconnectNotBefore[transport.deviceId] = DateTime.now().add(
+      _reconnectNotBefore[transport.deviceId] = _now().add(
         reconnectSettleDelay,
       );
       _reconnectPoke?.cancel();
@@ -881,10 +839,7 @@ class BleLinkManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _runPostConnectSetup(
-    _SetupToken token,
-    LinkTransport transport,
-  ) async {
+  Future<void> _runPostConnectSetup(LinkTransport transport) async {
     final String deviceId = transport.deviceId;
     final setup = SettingUp(transport, BtLinkState.connected);
     _link = setup;
@@ -892,13 +847,13 @@ class BleLinkManager extends ChangeNotifier {
 
     try {
       setup.mtu = await transport.negotiateMtu();
-      if (!token.isCurrent) return;
+      if (!identical(_link, setup)) return;
 
       await transport.discoverServices();
-      if (!token.isCurrent) return;
+      if (!identical(_link, setup)) return;
 
       final deviceInfo = await transport.readDeviceInfo();
-      if (!token.isCurrent) return;
+      if (!identical(_link, setup)) return;
       setup.info = deviceInfo;
 
       // The KVS channel comes up BEFORE the ADC feed subscription: firmware
@@ -907,12 +862,12 @@ class BleLinkManager extends ChangeNotifier {
       notifyListeners();
 
       final AdcConfig adcConfig = await transport.readAdcConfig();
-      if (!token.isCurrent) return;
+      if (!identical(_link, setup)) return;
       setup.adcConfig = adcConfig;
       _onSampleRate(adcConfig.sampleRateHz);
 
       await transport.openBackend();
-      if (!token.isCurrent) return;
+      if (!identical(_link, setup)) return;
       final backend = transport.backend;
       if (backend == null) {
         throw StateError('KVS channel unavailable on $deviceId');
@@ -920,11 +875,11 @@ class BleLinkManager extends ChangeNotifier {
       // The stored name lands before the flash read: the rig's provenance
       // label is read off the link at doc delivery time.
       setup.storedName = await backend.readDeviceName();
-      if (!token.isCurrent) return;
+      if (!identical(_link, setup)) return;
       notifyListeners();
 
       final snapshot = await backend.readKvsSnapshot();
-      if (!token.isCurrent) return;
+      if (!identical(_link, setup)) return;
       // A parse failure is a value (InvalidBoardCalibration), not a link
       // failure.
       final flash = DeviceFlash.fromKvs(snapshot, pgaGains: adcConfig.pgaGains);
@@ -934,7 +889,7 @@ class BleLinkManager extends ChangeNotifier {
       notifyListeners();
 
       await transport.subscribeToAdcFeed();
-      if (!token.isCurrent) return;
+      if (!identical(_link, setup)) return;
 
       _link = Ready(
         LinkInfo(
@@ -950,7 +905,7 @@ class BleLinkManager extends ChangeNotifier {
       notifyListeners();
       _startRssiPolling(transport);
     } catch (e) {
-      if (!token.isCurrent) {
+      if (!identical(_link, setup)) {
         debugPrint('Ignoring stale post-connect failure for $deviceId: $e');
         return;
       }
@@ -970,8 +925,7 @@ class BleLinkManager extends ChangeNotifier {
     if (!canConnectTo(deviceId)) {
       return false;
     }
-    _outcomes.clear();
-    _supersedeSetupPasses();
+    _outcomes.remove(deviceId);
     return true;
   }
 
@@ -1006,9 +960,7 @@ class BleLinkManager extends ChangeNotifier {
     if (_link is! Connecting || _link.deviceId != transport.deviceId) {
       return;
     }
-    unawaited(
-      _runPostConnectSetup(_setupTokenFor(transport.deviceId), transport),
-    );
+    unawaited(_runPostConnectSetup(transport));
   }
 
   Future<void> connectToDemoDevice() async {
@@ -1021,13 +973,15 @@ class BleLinkManager extends ChangeNotifier {
   }
 
   Future<void> connectToDevice(String deviceId) async {
-    final device = _devices.where((d) => d.deviceId == deviceId).firstOrNull;
+    final device = _devices[deviceId];
     final transport = BleLinkTransport(
       deviceId: deviceId,
       displayName: device?.name ?? deviceId,
       withFeedPaused: _withFeedPaused,
+      onKvsTimeout: _onKvsTimeout,
       connectTimeout: connectTimeout,
       disconnectTimeout: disconnectTimeout,
+      isWeb: isWeb,
     );
     await _beginLink(transport);
   }
@@ -1050,7 +1004,6 @@ class BleLinkManager extends ChangeNotifier {
     if (link is! Connecting && !link.isLinkUp) return;
     final String deviceId = transport.deviceId;
     final String deviceName = link.displayName;
-    _supersedeSetupPasses();
 
     // Stamped here, not in the callback: by the time it runs the state is
     // already `disconnecting`, so its `wasActive` check is false.
@@ -1140,21 +1093,24 @@ class BleLinkManager extends ChangeNotifier {
   Future<void> shutdownForHotRestart() async {
     _onAdcData = _ignoreFeedData;
     _onSampleRate = _ignoreSampleRate;
-    final transport = _link.transport;
+    final link = _link;
+    final transport = link.transport;
     transport?.dispose();
+    // Invalidate an in-flight setup before the first await: its continuations
+    // use object identity, and teardown callbacks may never arrive.
+    _link = const NoLink();
     _stopRssiPolling();
     _freshnessWatcher.dispose();
     _freshnessPoke?.cancel();
     _freshnessPoke = null;
     _reconnectPoke?.cancel();
     _reconnectPoke = null;
-    _supersedeSetupPasses();
 
     try {
       if (_isScanning) {
         await UniversalBle.stopScan();
       }
-      if (transport != null && !transport.isSimulated && _link.isLinkUp) {
+      if (transport != null && !transport.isSimulated && link.isLinkUp) {
         await transport.disconnect();
       }
     } catch (_) {

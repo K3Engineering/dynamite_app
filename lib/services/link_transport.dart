@@ -97,8 +97,10 @@ class BleLinkTransport implements LinkTransport {
     required this.deviceId,
     required this.displayName,
     required this.withFeedPaused,
+    required this.onKvsTimeout,
     required this.connectTimeout,
     required this.disconnectTimeout,
+    this.isWeb = kIsWeb,
   });
 
   @override
@@ -107,9 +109,15 @@ class BleLinkTransport implements LinkTransport {
   @override
   final String displayName;
 
+  /// Matches the manager's injected platform mode in tests.
+  final bool isWeb;
+
   /// Run a KVS operation with the ADC feed subscription briefly paused,
   /// supplied by the link manager (which owns the subscription).
-  final Future<T> Function<T>(Future<T> Function()) withFeedPaused;
+  final WithFeedPaused withFeedPaused;
+
+  /// A timed-out command has an ambiguous wire state, so its link must end.
+  final void Function(BleLinkTransport transport) onKvsTimeout;
 
   final Duration connectTimeout;
   final Duration disconnectTimeout;
@@ -120,7 +128,6 @@ class BleLinkTransport implements LinkTransport {
   GattLinkBackend? _backend;
   int? _mtu;
   OtaClient? _otaClient;
-  void Function(Uint8List data)? _onOtaFrame;
   bool _disposed = false;
 
   @override
@@ -144,7 +151,7 @@ class BleLinkTransport implements LinkTransport {
 
   @override
   Future<int?> negotiateMtu() async {
-    if (kIsWeb) return null;
+    if (isWeb) return null;
     _mtu = await UniversalBle.requestMtu(deviceId, 247);
     return _mtu;
   }
@@ -171,9 +178,11 @@ class BleLinkTransport implements LinkTransport {
   }
 
   @override
-  Future<DeviceInfo> readDeviceInfo() => _retryOnce(() async {
+  Future<DeviceInfo> readDeviceInfo() async {
     Future<String> readString(String characteristic) async => utf8.decode(
-      await UniversalBle.read(deviceId, btSvcDeviceInfo, characteristic),
+      await _retryOnce(
+        () => UniversalBle.read(deviceId, btSvcDeviceInfo, characteristic),
+      ),
     );
 
     Future<String?> readSoftwareRev() async {
@@ -190,32 +199,31 @@ class BleLinkTransport implements LinkTransport {
     return DeviceInfo(
       manufacturer: await readString(btChrDisManufacturer),
       model: await readString(btChrDisModel),
-      serial: kIsWeb ? null : await readString(btChrDisSerial),
+      serial: isWeb ? null : await readString(btChrDisSerial),
       hardwareRev: await readString(btChrDisHardwareRev),
       firmwareRev: await readString(btChrDisFirmwareRev),
       frameworkRev: await readSoftwareRev(),
     );
-  });
+  }
 
   @override
-  Future<AdcConfig> readAdcConfig() => _retryOnce(() async {
-    final bytes = await UniversalBle.read(
-      deviceId,
-      btServiceId,
-      btChrAdcConfig,
+  Future<AdcConfig> readAdcConfig() async {
+    final bytes = await _retryOnce(
+      () => UniversalBle.read(deviceId, btServiceId, btChrAdcConfig),
     );
     final config = parseAdcConfig(bytes);
     if (config == null) {
       throw StateError('ADC config parse failed for $deviceId');
     }
     return config;
-  });
+  }
 
   @override
   Future<void> openBackend() => _retryOnce(() async {
     final client = KvsClient(
       write: (bytes) =>
           UniversalBle.write(deviceId, btServiceId, btChrKvs, bytes),
+      onTimeout: () => onKvsTimeout(this),
     );
     await UniversalBle.subscribeNotifications(deviceId, btServiceId, btChrKvs);
     if (_disposed) {
@@ -252,45 +260,55 @@ class BleLinkTransport implements LinkTransport {
   Future<int> readRssi() => UniversalBle.readRssi(deviceId);
 
   @override
-  void handleOtaFrame(Uint8List data) => _onOtaFrame?.call(data);
+  void handleOtaFrame(Uint8List data) => _otaClient?.handleNotification(data);
 
   @override
-  Future<T> runOta<T>(Future<T> Function(OtaClient client) body) async {
-    await UniversalBle.subscribeNotifications(
-      deviceId,
-      otaServiceId,
-      btChrOtaControl,
+  Future<T> runOta<T>(Future<T> Function(OtaClient client) body) {
+    OtaClient? session;
+    return withFeedPaused(
+      () async {
+        await UniversalBle.subscribeNotifications(
+          deviceId,
+          otaServiceId,
+          btChrOtaControl,
+        );
+        // Chunk cap mirrors the reference client (min(mtu - 3, 244)). Web never
+        // reports the negotiated MTU; the platforms in use negotiate 247, so
+        // fall through to the 247 -> 244 cap.
+        final mtu = _mtu;
+        final client = OtaClient(
+          chunkSize: mtu == null ? 244 : min(mtu - 3, 244),
+          writeControl: (bytes, {withoutResponse = false}) =>
+              UniversalBle.write(
+                deviceId,
+                otaServiceId,
+                btChrOtaControl,
+                bytes,
+                withoutResponse: withoutResponse,
+              ),
+          writeData: (bytes) =>
+              UniversalBle.write(deviceId, otaServiceId, btChrOtaData, bytes),
+        );
+        session = client;
+        _otaClient = client;
+        return body(client);
+      },
+      afterResume: () async {
+        final client = session;
+        if (client == null) return;
+        _otaClient = null;
+        client.abort();
+        try {
+          await UniversalBle.unsubscribe(
+            deviceId,
+            otaServiceId,
+            btChrOtaControl,
+          );
+        } catch (_) {
+          // Teardown hygiene only; the session already settled.
+        }
+      },
     );
-    // Chunk cap mirrors the reference client (min(mtu - 3, 244)). Web never
-    // reports the negotiated MTU; the platforms in use negotiate 247, so
-    // fall through to the 247 -> 244 cap.
-    final mtu = _mtu;
-    final client = OtaClient(
-      chunkSize: mtu == null ? 244 : min(mtu - 3, 244),
-      writeControl: (bytes, {withoutResponse = false}) => UniversalBle.write(
-        deviceId,
-        otaServiceId,
-        btChrOtaControl,
-        bytes,
-        withoutResponse: withoutResponse,
-      ),
-      writeData: (bytes) =>
-          UniversalBle.write(deviceId, otaServiceId, btChrOtaData, bytes),
-    );
-    _otaClient = client;
-    _onOtaFrame = client.handleNotification;
-    try {
-      return await withFeedPaused(() => body(client));
-    } finally {
-      _otaClient = null;
-      _onOtaFrame = null;
-      client.abort();
-      try {
-        await UniversalBle.unsubscribe(deviceId, otaServiceId, btChrOtaControl);
-      } catch (_) {
-        // Teardown hygiene only; the session already settled.
-      }
-    }
   }
 
   @override
@@ -304,16 +322,21 @@ class BleLinkTransport implements LinkTransport {
     _backend = null;
     _otaClient?.abort();
     _otaClient = null;
-    _onOtaFrame = null;
   }
 }
 
 /// One retry on failure. A transient BLE hiccup is not a broken board, so the
 /// link's essential reads and channel bring-up get a second chance; a
 /// persistent failure still propagates (the caller fails the connection).
+/// Characteristic absence is permanent within this service discovery and is
+/// handled by the caller instead (optional Software Revision, or setup failure).
 Future<T> _retryOnce<T>(Future<T> Function() op) async {
   try {
     return await op();
+  } on UniversalBleException catch (e) {
+    if (e.code == UniversalBleErrorCode.characteristicNotFound) rethrow;
+    debugPrint('Link transport read failed, retrying once: $e');
+    return op();
   } catch (e) {
     debugPrint('Link transport read failed, retrying once: $e');
     return op();

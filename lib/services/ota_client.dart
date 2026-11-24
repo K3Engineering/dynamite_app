@@ -53,6 +53,7 @@ class OtaClient {
   final Duration ackTimeout;
 
   bool _aborted = false;
+  bool _started = false;
   Completer<Uint8List>? _waiting;
 
   /// Entry point for Control notifications. Settles only the live wait.
@@ -80,6 +81,9 @@ class OtaClient {
     required Uint8List image,
     void Function(int sentBytes)? onProgress,
   }) async {
+    if (_started) throw StateError('OtaClient is single-use');
+    _started = true;
+
     final request = await _transact(
       encodeOtaRequest(image.length),
       'start the update',

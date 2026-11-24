@@ -174,6 +174,25 @@ void main() {
     });
   });
 
+  test('a client rejects a second flash without disturbing the first', () {
+    fakeAsync((async) {
+      final (client, writes) = wire();
+      final firstErrors = <Object>[];
+      final secondErrors = <Object>[];
+      track(client.flash(image: Uint8List(10)), firstErrors);
+      async.flushMicrotasks();
+
+      track(client.flash(image: Uint8List(10)), secondErrors);
+      async.flushMicrotasks();
+      expect(secondErrors.single, isA<StateError>());
+      expect(writes.single.endpoint, 'control');
+
+      // The rejected call did not replace the first REQUEST's live wait.
+      completeHandshake(async, client);
+      expect(firstErrors, isEmpty);
+    });
+  });
+
   test('abort fails the live wait', () {
     fakeAsync((async) {
       final (client, _) = wire();

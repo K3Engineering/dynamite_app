@@ -148,6 +148,13 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// Test spy: how many [readRssi] calls arrived.
   int readRssiCalls = 0;
 
+  /// Simulated RSSI latency, for detecting overlapping periodic reads.
+  Duration rssiDelay = Duration.zero;
+
+  /// OTA Control subscription transitions, separate from [gattOpLog] so the
+  /// feed/KVS assertions can remain focused on those protocols.
+  final List<BleInputProperty> otaControlSubscriptionLog = [];
+
   /// The device the mock currently considers linked (test assertions only).
   String? get connectedDeviceId => _connectedDeviceId;
 
@@ -173,6 +180,8 @@ class MockBlePlatform extends UniversalBlePlatform {
     slowConnect = false;
     disconnectCalls.clear();
     readRssiCalls = 0;
+    rssiDelay = Duration.zero;
+    otaControlSubscriptionLog.clear();
     refuseOtaStart = false;
     otaDataBytes = 0;
     kvsCommandLog.clear();
@@ -355,6 +364,9 @@ class MockBlePlatform extends UniversalBlePlatform {
       throw StateError('Mock feed subscribe failure');
     }
     // Only the ADC feed drives the packet timer; KVS is request/response.
+    if (characteristic == btChrOtaControl) {
+      otaControlSubscriptionLog.add(bleInputProperty);
+    }
     if (characteristic.isNotEmpty && characteristic != btChrAdcFeedId) {
       return;
     }
@@ -550,6 +562,7 @@ class MockBlePlatform extends UniversalBlePlatform {
   @override
   Future<int> readRssi(String deviceId) async {
     readRssiCalls++;
+    await Future<void>.delayed(rssiDelay);
     return 1;
   }
 
