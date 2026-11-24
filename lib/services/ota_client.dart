@@ -53,6 +53,7 @@ class OtaClient {
   final Duration ackTimeout;
 
   bool _aborted = false;
+  bool _started = false;
   Completer<Uint8List>? _waiting;
 
   /// Entry point for Control notifications. Settles only the live wait.
@@ -80,6 +81,9 @@ class OtaClient {
     required Uint8List image,
     void Function(int sentBytes)? onProgress,
   }) async {
+    if (_started) throw StateError('OtaClient is single-use');
+    _started = true;
+
     final request = await _transact(
       encodeOtaRequest(image.length),
       'start the update',
@@ -130,6 +134,9 @@ class OtaClient {
   }) async {
     if (_aborted) throw StateError('OTA session aborted');
     final waiting = Completer<Uint8List>();
+    // abort() can fire while writeControl is still pending, before the await
+    // below installs an error listener.
+    waiting.future.ignore();
     _waiting = waiting;
     try {
       await writeControl(bytes, withoutResponse: withoutResponse);

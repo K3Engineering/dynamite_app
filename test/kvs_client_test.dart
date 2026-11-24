@@ -19,12 +19,13 @@ import 'helpers/mockble.dart';
 void main() {
   const deviceId = '2';
 
-  KvsClient wire() {
+  KvsClient wire({void Function()? onTimeout}) {
     UniversalBle.setInstance(MockBlePlatform.instance);
     MockBlePlatform.instance.resetKnobs();
     final client = KvsClient(
       write: (bytes) =>
           UniversalBle.write(deviceId, btServiceId, btChrKvs, bytes),
+      onTimeout: onTimeout ?? () {},
     );
     UniversalBle.onValueChange = (update) {
       if (update.characteristicId == btChrKvs) {
@@ -167,25 +168,47 @@ void main() {
     });
   });
 
-  test('an unanswered command times out; the queue recovers', () {
+  test('an unanswered command aborts the client and reports a broken link', () {
     fakeAsync((async) {
-      final client = wire();
+      var timeouts = 0;
+      final client = wire(onTimeout: () => timeouts++);
       silenceDevice();
 
       final errors = <Object>[];
       track(client.get(kvsFolderFactory, 'ch0.r'), errors);
+      track(client.get(kvsFolderFactory, 'ch1.r'), errors);
       async.elapse(const Duration(seconds: 4));
 
-      expect(errors, hasLength(1));
-      expect(errors.single, isA<TimeoutException>());
+      expect(timeouts, 1);
+      expect(errors, hasLength(2));
+      expect(errors[0], isA<TimeoutException>());
+      expect(errors[1], isA<StateError>());
 
-      // The timed-out command did not wedge the queue: once the link
-      // answers again, a fresh command resolves normally.
+      // No later command can touch the wire or consume a late response.
       mock.kvsDropCommands = false;
-      String? value;
-      unawaited(client.get(kvsFolderFactory, 'ch0.r').then((v) => value = v));
+      mock.kvsCommandLog.clear();
+      track(client.get(kvsFolderFactory, 'ch0.r'), errors);
       async.flushMicrotasks();
-      expect(value, mock.kvsStore[kvsFolderFactory]!['ch0.r']);
+      expect(errors, hasLength(3));
+      expect(errors.last, isA<StateError>());
+      expect(mock.kvsCommandLog, isEmpty);
+    });
+  });
+
+  test('command timeout includes a write that never completes', () {
+    fakeAsync((async) {
+      var timeouts = 0;
+      final client = KvsClient(
+        write: (_) => Completer<void>().future,
+        onTimeout: () => timeouts++,
+      );
+      final errors = <Object>[];
+      track(client.get(kvsFolderFactory, 'ch0.r'), errors);
+
+      async.elapse(const Duration(seconds: 4));
+
+      expect(timeouts, 1);
+      expect(errors.single, isA<TimeoutException>());
     });
   });
 
@@ -285,34 +308,6 @@ void main() {
     });
   });
 
-  test("a timed-out command's late frame does not poison the next command", () {
-    fakeAsync((async) {
-      final client = wire();
-      silenceDevice();
-      final errors = <Object>[];
-      track(
-        client.get(kvsFolderFactory, 'ch0'),
-        errors,
-      ); // unanswered, times out
-      async.elapse(const Duration(seconds: 4));
-      expect(errors, hasLength(1));
-
-      mock.kvsDropCommands = false;
-      mock.kvsCommandDelay = const Duration(seconds: 1);
-      String? value;
-      unawaited(client.get(kvsFolderFactory, 'ch0.r').then((v) => value = v));
-      async.flushMicrotasks();
-      // The timed-out 'GETFch0's late reply lands while 'GETFch0.r' is live.
-      client.handleNotification(
-        Uint8List.fromList(utf8.encode('1GETFch0=stale')),
-      );
-      async.elapse(const Duration(seconds: 2));
-
-      expect(errors, hasLength(1));
-      expect(value, mock.kvsStore[kvsFolderFactory]!['ch0.r']);
-    });
-  });
-
   test('a duplicate frame in the write window does not throw', () {
     fakeAsync((async) {
       final client = wire();
@@ -331,27 +326,6 @@ void main() {
       async.flushMicrotasks();
       expect(value, '1,2,3');
       // The mock's own frame lands afterwards and drops quietly as well.
-      async.elapse(const Duration(seconds: 2));
-    });
-  });
-
-  test('a byte-identical late frame is accepted as the live answer', () {
-    fakeAsync((async) {
-      // The protocol has no transaction ID: a stale frame byte-identical to
-      // the live command's answer is indistinguishable from that answer.
-      // Accepting it is correct — KVS commands are idempotent, and the
-      // device did execute that exact command.
-      final client = wire();
-      mock.kvsCommandDelay = const Duration(seconds: 1);
-
-      String? value;
-      unawaited(client.get(kvsFolderFactory, 'ch0.r').then((v) => value = v));
-      async.flushMicrotasks();
-      client.handleNotification(
-        Uint8List.fromList(utf8.encode('1GETFch0.r=stale-value')),
-      );
-      async.flushMicrotasks();
-      expect(value, 'stale-value');
       async.elapse(const Duration(seconds: 2));
     });
   });

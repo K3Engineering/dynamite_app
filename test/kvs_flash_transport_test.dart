@@ -27,6 +27,7 @@ void main() {
     final client = KvsClient(
       write: (bytes) =>
           UniversalBle.write(deviceId, btServiceId, btChrKvs, bytes),
+      onTimeout: () {},
     );
     UniversalBle.onValueChange = (update) {
       if (update.characteristicId == btChrKvs) {

@@ -2,6 +2,9 @@ import 'dart:typed_data';
 
 import '../models/device_flash.dart';
 
+/// A feed-maintenance operation, serialized with other operations on its link.
+typedef WithFeedPaused = Future<T> Function<T>(Future<T> Function() body);
+
 /// The device-side operations of the active link: the flash document round
 /// trip, the Settings-namespace device name, and KVS frame routing.
 /// Implemented by `GattLinkBackend` (a real link's KVS channel) and by the
@@ -40,7 +43,4 @@ abstract interface class LinkBackend {
   /// Route a KVS notification frame to the outstanding command. Unreachable
   /// on backends without a GATT notification path — throws there.
   void handleKvsFrame(Uint8List data);
-
-  /// The link is going away: stop the feed / abort in-flight commands.
-  void dispose();
 }

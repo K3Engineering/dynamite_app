@@ -10,18 +10,24 @@ import 'kvs_protocol.dart';
 /// command write with exactly one notification, so commands are serialized and
 /// matched by echoed text (see [parseKvsResponse]). A missing answer fails
 /// after [commandTimeout] — the device answers every command ('B' while
-/// locked/streaming), so a timeout means the link is broken. [abort] fails all
-/// pending work; the client is spent afterwards (a new link builds a new one).
-///
-/// A late answer for a timed-out command is normally stale and dropped; only a
-/// byte-identical one settles the live command, safe because the wire has no
-/// transaction id and SET/DEL are idempotent.
+/// locked/streaming), so a timeout means the link is broken. A timeout spends
+/// the client and invokes [onTimeout] so the owner can tear down the link; a
+/// new link builds a new client. [abort] also fails all pending work and spends
+/// the client.
 class KvsClient {
-  new({required this.write, this.commandTimeout = const Duration(seconds: 3)});
+  new({
+    required this.write,
+    required this.onTimeout,
+    this.commandTimeout = const Duration(seconds: 3),
+  });
 
   /// One command frame: a write to the link's KVS characteristic, supplied by
   /// the link manager (which owns the platform BLE call).
   final Future<void> Function(Uint8List bytes) write;
+
+  /// Called after a timeout aborts this client. The owner supplies link
+  /// teardown; the client has no connection-level handle.
+  final void Function() onTimeout;
 
   /// Upper bound on one command's write + response round trip; below the BLE
   /// stack's own timeout so an unanswered command fails while callers can react.
@@ -120,8 +126,18 @@ class KvsClient {
       final command = _queue.first;
       _current = command;
       try {
-        await write(Uint8List.fromList(utf8.encode(command.request)));
-        await command.completer.future.timeout(commandTimeout);
+        await write(Uint8List.fromList(utf8.encode(command.request)))
+            .then((_) => command.completer.future)
+            .timeout(commandTimeout);
+      } on TimeoutException catch (e) {
+        // An answer that landed inside the write window still proves the link
+        // answered. Without one, continuing could match this command's late
+        // response to a later identical request.
+        if (!command.completer.isCompleted) {
+          command.completer.completeError(e);
+          abort();
+          onTimeout();
+        }
       } catch (e) {
         // The response may have landed in the write window; it's the caller's
         // completer, so only fail it when no answer did.

@@ -24,7 +24,7 @@ class GattLinkBackend implements LinkBackend {
 
   /// Run a KVS operation with the ADC feed subscription briefly paused,
   /// supplied by the link manager (which owns the subscription).
-  final Future<T> Function<T>(Future<T> Function()) withFeedPaused;
+  final WithFeedPaused withFeedPaused;
 
   @override
   Future<void> writeSlots(Map<String, String> lcKeys) =>
@@ -47,13 +47,10 @@ class GattLinkBackend implements LinkBackend {
 
   @override
   Future<String?> readDeviceName() =>
-      _client.get(kvsFolderSettings, kvsKeyDeviceName);
+      withFeedPaused(() => _client.get(kvsFolderSettings, kvsKeyDeviceName));
 
   @override
   void handleKvsFrame(Uint8List data) => _client.handleNotification(data);
-
-  @override
-  void dispose() => _client.abort();
 }
 
 /// Document-level view of the device KVS: reads the folder-separated store
