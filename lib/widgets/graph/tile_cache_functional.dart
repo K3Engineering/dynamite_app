@@ -134,7 +134,7 @@ CacheEnv cacheEnvFor(CacheConfig c) {
   );
 }
 
-typedef BakePlan = ({int from, int to, int start, int end});
+typedef BakePlan = ({int from, int to, int start, int end, bool gap});
 
 typedef BlitRect = ({
   TileMeta tile,
@@ -291,7 +291,7 @@ BakePlan? _bakeWidestGap(List<TileMeta> tiles, CacheEnv env) {
   }
 
   start = math.max(start, env.covStart);
-  return (from: from, to: to, start: start, end: end);
+  return (from: from, to: to, start: start, end: end, gap: true);
 }
 
 BakePlan? _refreshStaleTile(List<TileMeta> tiles, CacheEnv env) {
@@ -320,6 +320,7 @@ BakePlan? _planRefresh(List<TileMeta> tiles, int i, CacheEnv env) {
       to: i,
       start: end - env.targetSpan,
       end: end,
+      gap: false,
     ), env);
   }
   int from = i;
@@ -352,7 +353,13 @@ BakePlan? _planRefresh(List<TileMeta> tiles, int i, CacheEnv env) {
       mergedEnd = tiles[to].end;
     }
   }
-  return _clampPlan((from: from, to: to, start: start, end: mergedEnd), env);
+  return _clampPlan((
+    from: from,
+    to: to,
+    start: start,
+    end: mergedEnd,
+    gap: false,
+  ), env);
 }
 
 BakePlan _clampPlan(BakePlan p, CacheEnv env) => (
@@ -360,6 +367,7 @@ BakePlan _clampPlan(BakePlan p, CacheEnv env) => (
   to: p.to,
   start: math.max(p.start, env.covStart),
   end: math.min(p.end, math.min(env.covEnd, env.config.bakeHorizon)),
+  gap: p.gap,
 );
 
 TileMeta _metaFor(BakePlan plan, int textureId, CacheEnv env) {

@@ -358,6 +358,30 @@ class DataHub extends ChangeNotifier
     }
   }
 
+  /// Append synthetic 0.5 Hz waveforms for graph profiling. Unlike decoded
+  /// frames these do not feed tares, the device clock, or [HubBatchAppended],
+  /// so injected samples are displayed but never recorded.
+  void injectTestData(int samples) {
+    assert(samples >= 0);
+    final values = Int32List(kAdcChannelCount);
+    for (int i = 0; i < samples; i++) {
+      final phase = totalSamples * 2 * math.pi / sampleRateHz * 0.5;
+      values[0] = (math.sin(phase) * 50000 + 50000).toInt();
+      values[1] = (math.cos(phase) * 30000 + 30000).toInt();
+      values[2] = (math.sin(phase) * 25000 + 25000).toInt();
+      values[3] = (math.sin(phase + math.pi / 4) * 40000 + 40000).toInt();
+
+      for (int ch = 0; ch < kAdcChannelCount; ch++) {
+        final val = values[ch];
+        _currentRaw[ch] = val;
+        _addData(val, ch);
+      }
+      totalSamples++;
+    }
+    gaps.pruneBefore(totalSamples - maxDataSz);
+    if (samples > 0) notifyListeners();
+  }
+
   /// Record [count] dropped samples (the decoder detected a gap in the packet
   /// counter): append the range to [gaps] and hold each channel's last value
   /// ([_currentRaw]) in the ring buffer so the stored data stays magic-free.

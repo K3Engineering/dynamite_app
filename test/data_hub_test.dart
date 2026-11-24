@@ -51,6 +51,28 @@ void main() {
     }
   }
 
+  group('profiling test data', () {
+    test('injection appends samples without committing a recording batch', () {
+      final hub = DataHub();
+      final events = <HubEvent>[];
+      var notified = 0;
+      hub.addEventListener(events.add);
+      hub.addListener(() => notified++);
+
+      hub.injectTestData(4);
+
+      expect(hub.totalSamples, 4);
+      expect(hub.rawAt(0, 0), 50000);
+      expect(hub.rawAt(1, 0), 60000);
+      expect(hub.rawAt(2, 0), 25000);
+      expect(hub.valueBucketsFor(0).samples, 4);
+      expect(hub.diffBucketsFor(0).samples, 4);
+      expect(events.whereType<HubBatchAppended>(), isEmpty);
+      expect(hub.lastDataAt, isNull);
+      expect(notified, 1);
+    });
+  });
+
   group('peaks', () {
     test('an untouched hub has no peak', () {
       final hub = DataHub();

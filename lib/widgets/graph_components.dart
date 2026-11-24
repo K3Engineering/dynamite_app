@@ -18,6 +18,7 @@ import '../models/graph_data_source.dart';
 import '../models/load_cell.dart';
 import '../utils/nice_step.dart';
 import 'channel_palette.dart';
+import 'perf_stats.dart';
 import 'graph/axis_math.dart';
 import 'graph/block_reduction_cache.dart';
 import 'graph/envelope_renderer.dart';
@@ -2037,6 +2038,16 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   @nonVirtual
   @override
   void paint(Canvas canvas, Size size) {
+    final sw = Stopwatch()..start();
+    try {
+      _paint(canvas, size);
+    } finally {
+      sw.stop();
+      PerfStats.addPaint(sw.elapsedMicroseconds);
+    }
+  }
+
+  void _paint(Canvas canvas, Size size) {
     labels.beginPass();
     final layout = _setupGraphFrame(
       canvas,

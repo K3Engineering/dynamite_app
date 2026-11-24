@@ -217,7 +217,7 @@ void main() {
       meta(20, 60, contentW: 40 * 4, ghostKey: const ['new'], textureId: 2),
     ], c);
     final step = stepCache(state, c);
-    expect(step.frame.bake, (from: 0, to: 0, start: 0, end: 20));
+    expect(step.frame.bake, (from: 0, to: 0, start: 0, end: 20, gap: false));
     expect(
       [for (final t in step.state.tiles) (t.start, t.end)],
       [(0, 20), (20, 60)],
@@ -246,6 +246,6 @@ void main() {
       bakeHorizon: 4900,
     );
     final baked = stepCache(const CacheState(), grown);
-    expect(baked.frame.bake, (from: 0, to: -1, start: 0, end: 4900));
+    expect(baked.frame.bake, (from: 0, to: -1, start: 0, end: 4900, gap: true));
   });
 }

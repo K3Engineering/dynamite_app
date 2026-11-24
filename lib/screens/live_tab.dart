@@ -29,6 +29,7 @@ import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
 import '../widgets/graph_view_controls.dart';
+import '../widgets/perf_stats.dart';
 import '../widgets/rssi_indicator.dart';
 import '../widgets/snackbars.dart';
 import '../status_colors.dart';
@@ -58,7 +59,23 @@ class _LiveTabState extends State<LiveTab> {
   final ValueNotifier<bool> _showDerivative = ValueNotifier(false);
 
   @override
+  void initState() {
+    super.initState();
+    SchedulerBinding.instance.addTimingsCallback(_onFrameTimings);
+  }
+
+  void _onFrameTimings(List<FrameTiming> timings) {
+    for (final t in timings) {
+      PerfStats.addFrame(
+        t.rasterDuration.inMicroseconds,
+        t.buildDuration.inMicroseconds,
+      );
+    }
+  }
+
+  @override
   void dispose() {
+    SchedulerBinding.instance.removeTimingsCallback(_onFrameTimings);
     _showDerivative.dispose();
     _graphCtrl.dispose();
     super.dispose();
@@ -74,6 +91,11 @@ class _LiveTabState extends State<LiveTab> {
       return;
     }
     context.read<DataHub>().requestTare();
+  }
+
+  void _onInjectTestSineWave() {
+    final hub = context.read<DataHub>();
+    hub.injectTestData(hub.sampleRateHz * 60 * 5);
   }
 
   void _onTogglePause() {
@@ -249,6 +271,7 @@ class _LiveTabState extends State<LiveTab> {
                 settings: settings,
                 unit: unit,
               ),
+              onInjectTest: _onInjectTestSineWave,
             ),
         ],
       ),
@@ -721,6 +744,9 @@ class ActionButtons extends StatelessWidget {
   /// Opens the per-channel tare sheet; disabled while recording like TARE.
   final VoidCallback onTareSettings;
 
+  /// Injects a deterministic graph workload; not part of a recording.
+  final VoidCallback onInjectTest;
+
   const new({
     super.key,
     required this.isRecording,
@@ -729,6 +755,7 @@ class ActionButtons extends StatelessWidget {
     required this.onTogglePause,
     required this.onTare,
     required this.onTareSettings,
+    required this.onInjectTest,
     this.sessionStartTime,
   });
 
@@ -801,6 +828,18 @@ class ActionButtons extends StatelessWidget {
                   onPressed: isRecording || isPaused ? null : onTareSettings,
                   style: OutlinedButton.styleFrom(shape: _splitRight),
                   child: const Icon(Icons.tune, semanticLabel: 'Tare options'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Tooltip(
+                message: 'TEST SINE: inject five minutes of test data',
+                excludeFromSemantics: true,
+                child: OutlinedButton(
+                  onPressed: onInjectTest,
+                  child: const Icon(
+                    Icons.bug_report,
+                    semanticLabel: 'TEST SINE',
+                  ),
                 ),
               ),
             ],

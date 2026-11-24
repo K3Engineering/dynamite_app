@@ -32,6 +32,7 @@ void main() {
     VoidCallback? onToggleRecord,
     VoidCallback? onTogglePause,
     VoidCallback? onTare,
+    VoidCallback? onInjectTest,
   }) {
     return tester.pumpWidget(
       ChangeNotifierProvider<DataHub>.value(
@@ -47,6 +48,7 @@ void main() {
               onTogglePause: onTogglePause ?? () {},
               onTare: onTare ?? () {},
               onTareSettings: () {},
+              onInjectTest: onInjectTest ?? () {},
             ),
           ),
         ),
@@ -82,6 +84,14 @@ void main() {
 
     await tester.tap(tareButton());
     expect(tared, isTrue);
+  });
+
+  testWidgets('TEST SINE invokes the injection callback', (tester) async {
+    var injected = false;
+    await pumpButtons(tester, onInjectTest: () => injected = true);
+
+    await tester.tap(find.byIcon(Icons.bug_report));
+    expect(injected, isTrue);
   });
 
   testWidgets('the record control is disabled while monitoring is paused', (

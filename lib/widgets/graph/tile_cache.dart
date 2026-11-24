@@ -5,6 +5,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meta/meta.dart';
 
+import '../perf_stats.dart';
 import 'tile_cache_functional.dart';
 
 // ---------------------------------------------------------------------------
@@ -166,6 +167,7 @@ class TileGraphCache {
     final committed = _state = step.state;
     if (plan != null) {
       _executeBake(plan, committed.tiles[plan.from].textureId, c);
+      PerfStats.addTileBake(gap: plan.gap);
     }
     // A quiet pure step reuses the tile list. A changed list is the only way
     // the texture map can have drifted.
@@ -182,6 +184,10 @@ class TileGraphCache {
     }
     _drawBlits(canvas, step.frame.blits);
     _drawGaps(canvas, step.frame.gaps, c);
+    PerfStats.addTileDraws(
+      blits: step.frame.blits.length,
+      direct: step.frame.gaps.length,
+    );
     return plan != null;
   }
 
