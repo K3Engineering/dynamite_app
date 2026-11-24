@@ -581,6 +581,38 @@ void main() {
     });
   });
 
+  test('a stale RSSI read does not stop the replacement link polling', () {
+    fakeAsync((async) {
+      final (link, _) = wire();
+      final rssiReadGate = Completer<void>();
+      MockBlePlatform.instance.rssiReadGate = rssiReadGate;
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+      expect(MockBlePlatform.instance.readRssiCalls, 1);
+
+      // Reconnect while the original read is still pending.
+      unawaited(link.disconnectSelectedDevice());
+      async.elapse(const Duration(seconds: 4));
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 2));
+      expect(link.isStreaming, isTrue);
+      expect(MockBlePlatform.instance.readRssiCalls, 1);
+
+      // The replacement's first timer is armed when the stale read settles.
+      rssiReadGate.complete();
+      async.flushMicrotasks();
+      async.elapse(BleLinkManager.rssiPollInterval);
+      expect(MockBlePlatform.instance.readRssiCalls, 2);
+      expect(link.connectedRssi, 1);
+
+      async.elapse(BleLinkManager.rssiPollInterval);
+      expect(MockBlePlatform.instance.readRssiCalls, 3);
+      teardownLink(async, link);
+    });
+  });
+
   test('cancelling a hung connect releases the link and ignores the late '
       'success', () {
     fakeAsync((async) {
@@ -1195,6 +1227,52 @@ void main() {
       teardownLink(async, link);
     });
   });
+
+  test(
+    'an OTA queued behind an accepted OTA rejects its disposed transport',
+    () {
+      fakeAsync((async) {
+        final (link, seen) = wire();
+        unawaited(link.connectToDevice(deviceId));
+        async.elapse(const Duration(seconds: 4));
+        expect(link.isStreaming, isTrue);
+
+        MockBlePlatform.instance.gattOpLog.clear();
+        Object? firstError;
+        Object? secondError;
+        var secondBodyCalls = 0;
+        unawaited(
+          link
+              .runOta((client) => client.flash(image: Uint8List(600)))
+              .then((_) {}, onError: (Object e) => firstError = e),
+        );
+        unawaited(
+          link
+              .runOta((client) {
+                secondBodyCalls++;
+                return client.flash(image: Uint8List(600));
+              })
+              .then((_) {}, onError: (Object e) => secondError = e),
+        );
+        async.elapse(const Duration(seconds: 4));
+
+        // Success disconnects the first transport before the second queue entry
+        // starts, so the second must fail before any GATT operation or body.
+        expect(firstError, isNull);
+        expect(secondError, isA<StateError>());
+        expect(secondBodyCalls, 0);
+        expect(MockBlePlatform.instance.otaDataBytes, 600);
+        expect(MockBlePlatform.instance.otaControlSubscriptionLog, [
+          BleInputProperty.notification,
+          BleInputProperty.disabled,
+        ]);
+        expect(MockBlePlatform.instance.gattOpLog, ['adc:unsub']);
+        expect(MockBlePlatform.instance.disconnectCalls, [deviceId]);
+        expect(link.linkState, BtLinkState.idle);
+        expect(seen, isEmpty);
+      });
+    },
+  );
 
   test('a refused flash keeps the link and resumes the feed', () {
     fakeAsync((async) {

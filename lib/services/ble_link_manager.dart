@@ -707,10 +707,7 @@ class BleLinkManager extends ChangeNotifier {
     }
 
     Future<void> poll() async {
-      if (!identical(_link.transport, transport) || !_link.isStreaming) {
-        _stopRssiPolling();
-        return;
-      }
+      if (!identical(_link.transport, transport) || !_link.isStreaming) return;
       try {
         final int rssi = await transport.readRssi();
         if (identical(_link.transport, transport) && _link.isStreaming) {
@@ -721,10 +718,10 @@ class BleLinkManager extends ChangeNotifier {
         // The next one-shot poll retries.
       }
       // Schedule only after the read settles so slow reads cannot overlap.
+      // Only start/teardown cancel the shared timer: this read may be stale
+      // and settle after its replacement has installed a new timer.
       if (identical(_link.transport, transport) && _link.isStreaming) {
         _rssiPollTimer = Timer(rssiPollInterval, poll);
-      } else {
-        _stopRssiPolling();
       }
     }
 

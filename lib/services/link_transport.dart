@@ -267,6 +267,9 @@ class BleLinkTransport implements LinkTransport {
     OtaClient? session;
     return withFeedPaused(
       () async {
+        // An earlier feed-maintenance operation may have disposed this
+        // transport while this OTA was queued.
+        if (_disposed) throw StateError('OTA on a disposed link transport');
         await UniversalBle.subscribeNotifications(
           deviceId,
           otaServiceId,

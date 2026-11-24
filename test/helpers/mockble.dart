@@ -151,6 +151,9 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// Simulated RSSI latency, for detecting overlapping periodic reads.
   Duration rssiDelay = Duration.zero;
 
+  /// Holds RSSI reads open until the test completes it.
+  Completer<void>? rssiReadGate;
+
   /// OTA Control subscription transitions, separate from [gattOpLog] so the
   /// feed/KVS assertions can remain focused on those protocols.
   final List<BleInputProperty> otaControlSubscriptionLog = [];
@@ -181,6 +184,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     disconnectCalls.clear();
     readRssiCalls = 0;
     rssiDelay = Duration.zero;
+    rssiReadGate = null;
     otaControlSubscriptionLog.clear();
     refuseOtaStart = false;
     otaDataBytes = 0;
@@ -563,6 +567,7 @@ class MockBlePlatform extends UniversalBlePlatform {
   Future<int> readRssi(String deviceId) async {
     readRssiCalls++;
     await Future<void>.delayed(rssiDelay);
+    await rssiReadGate?.future;
     return 1;
   }
 
